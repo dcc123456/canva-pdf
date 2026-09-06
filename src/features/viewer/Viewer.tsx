@@ -355,6 +355,66 @@ function PageView({
           }
         }
         store.setPageBgColor(o.id, best);
+        // 文字色反推:颜色抽取在 Form XObject 等场景会失败,fallback 成
+        // 默认黑。若块底色非白(彩色底板)而文字色是默认黑,从渲染像素
+        // 反推真实文字色 —— 取帧内与底色差异明显的像素的众数量化色。
+        // (黑字白底的常态不触发。)
+        if (o.color === '#000000' && best.toLowerCase() !== '#ffffff') {
+          const refC = {
+            r: parseInt(best.slice(1, 3), 16),
+            g: parseInt(best.slice(3, 5), 16),
+            b: parseInt(best.slice(5, 7), 16),
+          };
+          const buckets = new Map<string, { n: number; r: number; g: number; b: number }>();
+          // 只统计块 bbox 内缩 2px 的中心区域(帧边缘可能含底板外像素),
+          // 排除底色像素后取众数 —— 白色文字不会被误排除。
+          const inX0 = Math.max(0, Math.round((b.x + 2) * k) - fx0);
+          const inY0 = Math.max(0, Math.round((b.y + 2) * k) - fy0);
+          const inX1 = Math.min(wpx, Math.round((b.x + b.w - 2) * k) - fx0);
+          const inY1 = Math.min(hpx, Math.round((b.y + b.h - 2) * k) - fy0);
+          for (let yy = inY0; yy < inY1; yy++) {
+            for (let xx = inX0; xx < inX1; xx++) {
+              const i = (yy * wpx + xx) * 4;
+              const r = img.data[i];
+              const g = img.data[i + 1];
+              const b2 = img.data[i + 2];
+              // 排除底色附近的像素(含抗锯齿过渡)
+              if (
+                Math.abs(r - refC.r) <= 28 &&
+                Math.abs(g - refC.g) <= 28 &&
+                Math.abs(b2 - refC.b) <= 28
+              ) {
+                continue;
+              }
+              const key = (r >> 4) + ',' + (g >> 4) + ',' + (b2 >> 4);
+              const bucket = buckets.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+              bucket.n++;
+              bucket.r += r;
+              bucket.g += g;
+              bucket.b += b2;
+              buckets.set(key, bucket);
+            }
+          }
+          // 众数量化桶的平均色,且像素数需达到文字笔画的量级
+          let bestB = null;
+          for (const bucket of buckets.values()) {
+            if (!bestB || bucket.n > bestB.n) bestB = bucket;
+          }
+          if (bestB && bestB.n > 30) {
+            const hex =
+              '#' +
+              [bestB.r / bestB.n, bestB.g / bestB.n, bestB.b / bestB.n]
+                .map((v) =>
+                  Math.max(0, Math.min(255, Math.round(v)))
+                    .toString(16)
+                    .padStart(2, '0')
+                )
+                .join('');
+            if (hex.toLowerCase() !== o.color.toLowerCase()) {
+              useDocumentStore.getState().updateOverlay(o.id, { color: hex });
+            }
+          }
+        }
         // 测量底板矩形:白底(页面底色)无需测量。
         if (best.toLowerCase() === '#ffffff') {
           store.setPanelRect(o.id, null);

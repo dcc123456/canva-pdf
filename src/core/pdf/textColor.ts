@@ -172,6 +172,25 @@ export function matchColorsToAtoms(
     }
     if (bestCount > 0) {
       result.set(atom.id, bestColor);
+      continue;
+    }
+    // 最近邻回退:extractTextColors 的宽度是估算值(coloredText 的 bbox
+    // 可能偏窄/偏移),相交判据会漏。退化为"垂直重叠 + x 中心最近"。
+    const atomCx = (xMin + xMax) / 2;
+    let nearest = null;
+    let nearestDist = Infinity;
+    for (const ct of coloredTexts) {
+      const ctYMin = ct.y;
+      const ctYMax = ct.y + ct.h;
+      if (ctYMin > yUpTop || ctYMax < yUpBottom) continue;
+      const dist = Math.abs(ct.x + ct.w / 2 - atomCx);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearest = ct;
+      }
+    }
+    if (nearest) {
+      result.set(atom.id, nearest.color);
     }
   }
 
