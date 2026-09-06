@@ -16,6 +16,7 @@ import type {
   ParseFormFieldsOptions,
   TextBlock,
 } from '../engine/types';
+import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import type { FontClass, RichTextSegment } from '../types';
 import { pdfLibFallbackEngine as pdfLibFallback } from '../engine/pdfLibFallback';
 import { loadMupdf, type MupdfNs } from './loader';
@@ -101,6 +102,10 @@ async function detectTextBlocksImpl(
   try {
     const page = doc.loadPage(pageIndex);
     let stext: ReturnType<typeof page.toStructuredText> | null = null;
+    // pdfjs 文档/页:颜色抽取与 bbox 校正共用,cleanup 统一放在 finally。
+    let pdfjsDoc: PDFDocumentProxy | null = null;
+    let pdfjsPage: PDFPageProxy | null = null;
+    let pageHeight = 0;
     try {
       // 用 "preserve-spans" 保证 mupdf 不会把多个视觉行合并到一行;
       // 我们自行按 baseline-y 聚类,把同行 span 拼成"一行一个 block"。
@@ -165,9 +170,10 @@ async function detectTextBlocksImpl(
       // ADR 0002: 提取每段 showText 的真实颜色,按位置匹配到每个 atom。
       // 在 atoms 聚合成 lines/blocks 之前先做,确保 atom.id 还在。
       try {
-        const pdfjsDoc = await loadDocument(new Uint8Array(bytes));
-        const pdfjsPage = await pdfjsDoc.getPage(pageIndex + 1);
+        pdfjsDoc = await loadDocument(new Uint8Array(bytes));
+        pdfjsPage = await pdfjsDoc.getPage(pageIndex + 1);
         const viewport = pdfjsPage.getViewport({ scale: 1 });
+        pageHeight = viewport.height;
         const coloredTexts = await extractTextColors(pdfjsPage);
         if (coloredTexts.length > 0) {
           const colorMap = matchColorsToAtoms(
@@ -180,8 +186,6 @@ async function detectTextBlocksImpl(
             if (c) atom.color = c;
           }
         }
-        pdfjsPage.cleanup();
-        await pdfjsDoc.cleanup();
       } catch (err) {
         // 颜色抽取失败不阻断检测,atom.color 留空,后续 segment.color 也会空,
         // 渲染端会 fallback 到 block.color 或 '#000000'。
@@ -457,10 +461,87 @@ async function detectTextBlocksImpl(
           fontClass: head.fontClass,
         });
       });
+
+      // ---------- 用 pdfjs getTextContent 校正 block bbox ------------------------
+      // MuPDF stext 的行/块 bbox 与 pdfjs 的实际渲染位置可能有系统性偏差
+      // (Pages/WPS 等导出的 PDF 常见,实测偏差可达 15px),而画布渲染(pdfjs)、
+      // 白底、重画全部以 pdfjs 坐标为基准 —— 检测 bbox 偏了会导致白底盖不住
+      // 原字(残影)、编辑框错位、重画与原字叠影。
+      // 这里把与 block bbox 相交的 pdfjs item(渲染级精确位置)并入 bbox。
+      if (pdfjsPage) {
+        try {
+          const tc = await pdfjsPage.getTextContent();
+          type ItemRect = { x0: number; x1: number; y0: number; y1: number };
+          const itemRects: ItemRect[] = [];
+          for (const it of tc.items) {
+            if (!('str' in it) || !it.str || !it.str.trim()) continue;
+            const t = it.transform;
+            const h = Math.abs(t[3]) || Math.abs(t[0]) || 10;
+            const w = it.width > 0 ? it.width : h * 0.5;
+            const x0 = t[4];
+            // pdfjs transform[5] 是基线 y(y-up);换算为 y-down 的文字矩形,
+            // 垂直方向放宽(ascent/降部)以容纳字形溢出。
+            const yBaselineDown = pageHeight - t[5];
+            itemRects.push({
+              x0,
+              x1: x0 + w,
+              y0: yBaselineDown - h * 1.15,
+              y1: yBaselineDown + h * 0.25,
+            });
+          }
+          for (const block of blocks) {
+            const b = block.bbox;
+            // item 中心点落在 block bbox 内即归属该块;多个块命中时取
+            // 垂直中心距最近者(上下紧邻块容错)。
+            let best: ItemRect[] | null = null;
+            let bestDist = Infinity;
+            for (const r of itemRects) {
+              const cx = (r.x0 + r.x1) / 2;
+              const cy = (r.y0 + r.y1) / 2;
+              if (cx < b.x || cx > b.x + b.w) continue;
+              if (cy < b.y || cy > b.y + b.h) continue;
+              const dist = Math.abs(cy - (b.y + b.h / 2));
+              if (!best || dist < bestDist) {
+                bestDist = dist;
+                best = [r];
+              } else if (dist === bestDist) {
+                best.push(r);
+              }
+            }
+            if (!best || best.length === 0) continue;
+            const nx0 = Math.min(b.x, ...best.map((r) => r.x0));
+            const ny0 = Math.min(b.y, ...best.map((r) => r.y0));
+            const nx1 = Math.max(b.x + b.w, ...best.map((r) => r.x1));
+            const ny1 = Math.max(b.y + b.h, ...best.map((r) => r.y1));
+            block.bbox = {
+              x: nx0,
+              y: ny0,
+              w: Math.max(1, nx1 - nx0),
+              h: Math.max(1, ny1 - ny0),
+            };
+          }
+        } catch (err) {
+          console.warn('[mupdfEngine] bbox 校正失败,使用 MuPDF 原始 bbox:', err);
+        }
+      }
       return blocks;
     } finally {
       stext?.destroy();
       page.destroy();
+      if (pdfjsPage) {
+        try {
+          pdfjsPage.cleanup();
+        } catch {
+          /* ignore */
+        }
+      }
+      if (pdfjsDoc) {
+        try {
+          await pdfjsDoc.cleanup();
+        } catch {
+          /* ignore */
+        }
+      }
     }
   } finally {
     doc.destroy();

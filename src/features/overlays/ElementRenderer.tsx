@@ -198,13 +198,15 @@ export function ElementRenderer({ overlay, selected = false }: ElementRendererPr
       const align = overlay.align || 'left';
       return (
         <>
-          {/* 白底画在 originalBbox:盖住 pdfjs canvas 上原位置的原字 */}
+          {/* 白底画在 originalBbox:盖住 pdfjs canvas 上原位置的原字。
+              加 pad(与导出端 whiteout 的 padX/padY 一致):字形(尤其
+              大写字母)边缘会溢出检测 bbox 1-2px,不留 pad 会露出原字残影。 */}
           {showOverlay && (
             <rect
-              x={overlay.originalBbox.x}
-              y={overlay.originalBbox.y}
-              width={overlay.originalBbox.w}
-              height={overlay.originalBbox.h}
+              x={overlay.originalBbox.x - 1}
+              y={overlay.originalBbox.y - overlay.originalBbox.h * 0.15}
+              width={overlay.originalBbox.w + 2}
+              height={overlay.originalBbox.h * 1.3}
               fill={pageBgColor}
               pointerEvents="none"
             />
@@ -239,6 +241,10 @@ export function ElementRenderer({ overlay, selected = false }: ElementRendererPr
                   width: 'max-content',
                   minWidth: '100%',
                   minHeight: '100%',
+                  // 重画文字自带底色(与白底同色):白底矩形只覆盖
+                  // originalBbox,重画文字超出/变化的部分若没有底色,
+                  // 底层 canvas 的原字会透过来与重画文字叠在一起。
+                  background: pageBgColor,
                   fontFamily: overlay.font,
                   fontSize: overlay.fontSize,
                   color: overlay.color,
