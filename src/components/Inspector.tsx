@@ -133,7 +133,7 @@ function NumberInput({
         const v = Number(e.target.value);
         if (Number.isFinite(v)) onChange(v);
       }}
-      className={clsx(inputCls, 'w-20 text-right')}
+      className={clsx(inputCls, 'w-full min-w-0 text-right')}
     />
   );
 }
@@ -146,7 +146,7 @@ function NumberField({
   children: React.ReactNode;
 }) {
   return (
-    <label className="flex items-center justify-between gap-2 text-xs text-gray-600">
+    <label className="flex min-w-0 items-center justify-between gap-2 text-xs text-gray-600">
       <span className="w-10 shrink-0">{label}</span>
       {children}
     </label>
@@ -181,7 +181,38 @@ function ToggleButton({
   );
 }
 
-/** Three-button alignment selector (left / center / right). */
+/** Three-button alignment selector (left / center / right), icon-based. */
+
+function AlignLeftIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
+      <line x1="2" y1="3.5" x2="12" y2="3.5" />
+      <line x1="2" y1="7" x2="8" y2="7" />
+      <line x1="2" y1="10.5" x2="10" y2="10.5" />
+    </svg>
+  );
+}
+
+function AlignCenterIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
+      <line x1="2" y1="3.5" x2="12" y2="3.5" />
+      <line x1="4" y1="7" x2="10" y2="7" />
+      <line x1="3" y1="10.5" x2="11" y2="10.5" />
+    </svg>
+  );
+}
+
+function AlignRightIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
+      <line x1="2" y1="3.5" x2="12" y2="3.5" />
+      <line x1="6" y1="7" x2="12" y2="7" />
+      <line x1="4" y1="10.5" x2="12" y2="10.5" />
+    </svg>
+  );
+}
+
 function AlignButtonGroup({
   align,
   onChange,
@@ -196,21 +227,21 @@ function AlignButtonGroup({
         onClick={() => onChange('left')}
         title="左对齐"
       >
-        左
+        <AlignLeftIcon />
       </ToggleButton>
       <ToggleButton
         active={align === 'center'}
         onClick={() => onChange('center')}
         title="居中"
       >
-        中
+        <AlignCenterIcon />
       </ToggleButton>
       <ToggleButton
         active={align === 'right'}
         onClick={() => onChange('right')}
         title="右对齐"
       >
-        右
+        <AlignRightIcon />
       </ToggleButton>
     </div>
   );
