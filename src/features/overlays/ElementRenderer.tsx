@@ -223,18 +223,22 @@ export function ElementRenderer({ overlay, selected = false }: ElementRendererPr
             pointerEvents="none"
           />
           {/* 新字画在 bbox(当前位置) -- Phase 2+3+4+6: foreignObject
-              for wrapping, alignment, multi-line and segments */}
+              for wrapping, alignment, multi-line and segments。
+              编辑字体与原字有 1-2px 度量差,固定 bbox 宽高会挤断行/裁剪;
+              与编辑态一致用 max-content 宽度 + overflow visible。 */}
           {showOverlay && (
             <foreignObject
               x={overlay.bbox.x}
               y={overlay.bbox.y}
               width={overlay.bbox.w}
               height={overlay.bbox.h}
+              style={{ overflow: 'visible' }}
             >
               <div
                 style={{
-                  width: '100%',
-                  height: '100%',
+                  width: 'max-content',
+                  minWidth: '100%',
+                  minHeight: '100%',
                   fontFamily: overlay.font,
                   fontSize: overlay.fontSize,
                   color: overlay.color,
@@ -244,7 +248,6 @@ export function ElementRenderer({ overlay, selected = false }: ElementRendererPr
                   lineHeight: String(lh),
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
-                  overflow: 'hidden',
                   boxSizing: 'border-box',
                   margin: 0,
                   padding: 0,
