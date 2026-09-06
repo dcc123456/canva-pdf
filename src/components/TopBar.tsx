@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { useHistoryStore } from '../store/historyStore';
 import { useEngineStore } from '../store/engineStore';
+import { useEditorStore } from '../store/editorStore';
 import { exportPdf } from '../features/export/exportPdf';
 import { saveProject } from '../features/project-io/saveProject';
 import { loadProject } from '../features/project-io/loadProject';
@@ -50,7 +51,11 @@ export function TopBar({ onOpenFile, onProjectLoaded, onOpenTemplates }: TopBarP
   const detectionVisible = useEngineStore((s) => s.detectionVisible);
   const detectionProgress = useEngineStore((s) => s.detectionProgress);
   const detectionLabel = useEngineStore((s) => s.detectionLabel);
+  const detectionTitle = useEngineStore((s) => s.detectionTitle);
   const engineStatusMessage = useEngineStore((s) => s.engineStatusMessage);
+
+  const fullReformat = useEditorStore((s) => s.fullReformat);
+  const setFullReformat = useEditorStore((s) => s.setFullReformat);
 
   const [busyPhase, setBusyPhase] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
@@ -140,6 +145,20 @@ export function TopBar({ onOpenFile, onProjectLoaded, onOpenTemplates }: TopBarP
             模板
           </button>
         )}
+
+        {/* 全文格式化开关:打开 PDF 时把全部文本按项目字体重排,全文样式统一 */}
+        <label
+          title="打开 PDF 时自动把全文按本项目支持的字体重排一遍,保证整份文档样式统一(编辑前后不再混排两种样式)。耗时与文档大小相关,处理期间会显示进度。"
+          className="flex cursor-pointer items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+        >
+          <input
+            type="checkbox"
+            checked={fullReformat}
+            onChange={(e) => setFullReformat(e.target.checked)}
+            className="h-3 w-3"
+          />
+          全文格式化
+        </label>
       </div>
 
       {/* Center: file operations */}
@@ -269,6 +288,7 @@ export function TopBar({ onOpenFile, onProjectLoaded, onOpenTemplates }: TopBarP
         visible={showOverlay}
         progress={overlayProgress}
         label={overlayLabel}
+        title={detectionTitle ?? undefined}
         error={mupdfError}
         onDismiss={() => {
           useEngineStore.getState().setDetectionVisible(false);

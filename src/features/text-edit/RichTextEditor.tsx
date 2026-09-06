@@ -14,7 +14,7 @@ import { FontFamily } from '@tiptap/extension-font-family';
 import { Text } from '@tiptap/extension-text';
 import type { Editor, JSONContent } from '@tiptap/core';
 import type { FontClass, RichTextSegment, TextBlockItem } from '../../core/types';
-import { FONT_CLASS_TO_CSS } from '../../core/engine/fontClassify';
+import { FONT_CLASS_TO_CSS, pdfFirstFontFamily } from '../../core/engine/fontClassify';
 
 // ---------- Custom Text extension: preserve all whitespace -------------------
 // ProseMirror's default text node trims/collapses whitespace per HTML rules.
@@ -62,7 +62,8 @@ export interface BlockDefaults {
 export function segmentsToTipTapContent(
   segments: RichTextSegment[] | undefined,
   text: string,
-  blockDefaults?: BlockDefaults
+  blockDefaults?: BlockDefaults,
+  zoom = 1
 ): JSONContent {
   const hasSegments = segments && segments.length > 0;
 
@@ -84,6 +85,15 @@ export function segmentsToTipTapContent(
     const cssFontFamily = fontClass
       ? FONT_CLASS_TO_CSS[fontClass]
       : (seg.fontFamily ?? blockDefaults?.fontFamily);
+    // WYSIWYG: PDF 原字体名优先(本机装了该字体即还原原字形),
+    // FontClass 映射字体兜底(原字体未安装时视觉仍接近)。
+    const fontFamilyAttr =
+      fontClass && cssFontFamily
+        ? pdfFirstFontFamily(
+            seg.fontFamily ?? blockDefaults?.fontFamily,
+            cssFontFamily
+          )
+        : cssFontFamily;
 
     if (isBold) marks.push({ type: 'bold' });
     if (isItalic) marks.push({ type: 'italic' });
@@ -93,9 +103,10 @@ export function segmentsToTipTapContent(
     const tsAttrs: Record<string, unknown> = {};
     if (color) tsAttrs.color = color;
     // Built-in FontSize stores a CSS string (e.g. '16px'); convert from the
-    // numeric segment value.
-    if (fontSize) tsAttrs.fontSize = `${fontSize}px`;
-    if (cssFontFamily) tsAttrs.fontFamily = cssFontFamily;
+    // numeric segment value. Segment 字号是 PDF pt 单位,乘 zoom 与块 bbox
+    // 的屏幕尺寸保持一致(编辑器容器字号同样是 pt*zoom)。
+    if (fontSize) tsAttrs.fontSize = `${fontSize * zoom}px`;
+    if (fontFamilyAttr) tsAttrs.fontFamily = fontFamilyAttr;
     if (Object.keys(tsAttrs).length > 0) {
       marks.push({ type: 'textStyle', attrs: tsAttrs });
     }
@@ -136,7 +147,8 @@ export function segmentsToTipTapContent(
 }
 
 export function editorToSegments(
-  editor: Editor
+  editor: Editor,
+  zoom = 1
 ): { text: string; segments: RichTextSegment[] } {
   const json = editor.getJSON();
   const raw: RichTextSegment[] = [];
@@ -166,12 +178,16 @@ export function editorToSegments(
       const attrs = ts?.attrs as Record<string, unknown> | undefined;
       const color = (attrs?.color as string) || inherited.color;
       // Built-in FontSize stores the value as a CSS string (e.g. '16px').
-      // Parse it back to a number for RichTextSegment.
+      // Parse it back to a number for RichTextSegment, undoing the zoom
+      // scaling applied in segmentsToTipTapContent (stored value = pt*zoom).
       const fontSizeRaw = (attrs?.fontSize as string | number | undefined) ?? inherited.fontSize;
-      const fontSize =
+      const fontSizeScaled =
         typeof fontSizeRaw === 'string'
           ? parseFloat(fontSizeRaw)
           : fontSizeRaw;
+      const fontSize = zoom !== 1 && fontSizeScaled
+        ? fontSizeScaled / zoom
+        : fontSizeScaled;
       const fontFamily = (attrs?.fontFamily as string | undefined) || inherited.fontFamily;
       const fontClass = (attrs?.fontClass as FontClass | undefined) || inherited.fontClass;
       if (color) seg.color = color;
@@ -251,6 +267,10 @@ export function RichTextEditor({
   onCommitRef.current = onCommit;
   const onCancelRef = useRef(onCancel);
   onCancelRef.current = onCancel;
+  // zoom 通过 ref 读取:useEditor 的回调闭包只创建一次,直接捕获 zoom
+  // 会在缩放后拿到旧值。
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
 
   const latestContentRef = useRef<{ text: string; segments: RichTextSegment[] } | null>(null);
   const committedRef = useRef(false);
@@ -293,10 +313,10 @@ export function RichTextEditor({
       fontSize: block.fontSize,
       fontFamily: block.font,
       fontClass: block.fontClass,
-    }),
+    }, zoom),
     autofocus: true,
     onUpdate: ({ editor: ed }) => {
-      latestContentRef.current = editorToSegments(ed);
+      latestContentRef.current = editorToSegments(ed, zoomRef.current);
     },
     editorProps: {
       attributes: {
@@ -304,7 +324,7 @@ export function RichTextEditor({
           'outline: none',
           `font-size: ${Math.max(8, block.fontSize * zoom)}px`,
           `line-height: ${block.lineHeight || 1.2}`,
-          `font-family: ${block.fontClass ? FONT_CLASS_TO_CSS[block.fontClass] : block.font}`,
+          `font-family: ${block.fontClass ? pdfFirstFontFamily(block.font, FONT_CLASS_TO_CSS[block.fontClass]) : block.font}`,
           `color: ${block.color || '#000000'}`,
           'padding: 0',
           'white-space: pre-wrap',
@@ -316,7 +336,7 @@ export function RichTextEditor({
           event.preventDefault();
           const ed = editor;
           if (ed && !ed.isDestroyed) {
-            const { text, segments } = editorToSegments(ed);
+            const { text, segments } = editorToSegments(ed, zoomRef.current);
             doCommit(text, segments);
           }
           return true;
@@ -330,7 +350,7 @@ export function RichTextEditor({
       },
     },
     onBlur: ({ editor: ed }) => {
-      const { text, segments } = editorToSegments(ed);
+      const { text, segments } = editorToSegments(ed, zoomRef.current);
       // Defer the commit decision: if focus moved into the floating toolbar
       // (e.g., the font-size input or font-family select), keep the editor
       // mounted and the toolbar visible. Only commit when focus truly leaves
@@ -374,7 +394,7 @@ export function RichTextEditor({
           }
           return;
         }
-        const { text, segments } = editorToSegments(editor);
+        const { text, segments } = editorToSegments(editor, zoomRef.current);
         doCommit(text, segments);
       });
     }
@@ -397,14 +417,24 @@ export function RichTextEditor({
     fontSize?: string | null;
     fontFamily?: string | null;
   };
-  // Built-in FontSize stores a CSS string (e.g. '16px'); parse to number for the input.
+  // Built-in FontSize stores a CSS string of pt*zoom (e.g. '16px' at zoom 1);
+  // parse and unscale so the input always shows PDF pt units.
   const fontSizeNum = textStyleAttrs.fontSize
-    ? parseFloat(textStyleAttrs.fontSize)
+    ? parseFloat(textStyleAttrs.fontSize) / zoom
     : NaN;
   const currentFontSize = Number.isFinite(fontSizeNum)
     ? fontSizeNum
     : block.fontSize;
-  const currentFontFamily = textStyleAttrs.fontFamily || '';
+  // fontFamily 属性可能是"PDF 原字体名, class CSS"的组合串,归一回
+  // class CSS 让下拉框能正确显示当前选项。
+  const rawFontFamily = textStyleAttrs.fontFamily || '';
+  const currentFontFamily = (() => {
+    if (!rawFontFamily) return '';
+    for (const css of Object.values(FONT_CLASS_TO_CSS)) {
+      if (rawFontFamily === css || rawFontFamily.includes(css)) return css;
+    }
+    return rawFontFamily;
+  })();
 
   const btnBase: React.CSSProperties = {
     padding: '2px 6px',
@@ -436,7 +466,7 @@ export function RichTextEditor({
   ];
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-white">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-inherit">
       <EditorContent
         editor={editor}
         className="tiptap-edit-area flex-1 overflow-auto"
@@ -509,7 +539,8 @@ export function RichTextEditor({
               onChange={(e) => {
                 const v = Number(e.target.value);
                 if (Number.isFinite(v)) {
-                  editor?.chain().focus().setFontSize(`${Math.max(6, Math.min(144, v))}px`).run();
+                  // 输入的是 PDF pt 单位,存入 mark 时乘 zoom。
+                  editor?.chain().focus().setFontSize(`${Math.max(6, Math.min(144, v)) * zoom}px`).run();
                 }
               }}
               style={{

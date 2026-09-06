@@ -160,6 +160,52 @@ export const FONT_CLASS_TO_CSS: Record<FontClass, string> = {
   'cjk-serif': '"Source Han Serif CN", "Source Han Serif SC", "Noto Serif CJK SC", "SimSun", "Songti SC", serif',
 };
 
+// ---------- PDF 原字体名 -> 浏览器 font-family --------------------------------
+
+const SYMBOL_FONT_RE = /wingdings|webdings|dingbat|marlett|symbol/i;
+
+/** 符号字体(Wingdings 等):字形映射不可靠,不能按名字直接交给浏览器渲染。 */
+export function isSymbolFontName(name: string | undefined | null): boolean {
+  return !!name && SYMBOL_FONT_RE.test(name);
+}
+
+/**
+ * PDF 字体名 -> 浏览器 font-family 候选列表(按优先级)。
+ *   "ABCDEF+STSongti-SC-Regular" -> ["STSongti-SC-Regular", "STSongti-SC"]
+ * 先尝试完整 PostScript 名(能命中时还原原字形/原字重),再尝试去字重
+ * 后缀的族名。泛化名(embedded / g_d0_f1)与符号字体返回 null。
+ */
+export function pdfFontFamilyCandidates(
+  fontName: string | undefined | null
+): string[] | null {
+  if (!fontName || isSymbolFontName(fontName)) return null;
+  const stripped = fontName.replace(/^[A-Z]{6}\+/, '').trim();
+  if (!stripped || stripped === 'embedded' || /^g_d\d+_f\d+$/.test(stripped)) {
+    return null;
+  }
+  const stem = stripped
+    .replace(
+      /[-_ ]?(Regular|Bold|Light|Medium|Heavy|Black|Italic|Oblique|Thin|ExtraLight|Semibold|Demibold)+$/i,
+      ''
+    )
+    .replace(/[-_ ]+$/, '')
+    .trim();
+  return stem && stem !== stripped ? [stripped, stem] : [stripped];
+}
+
+/**
+ * 编辑态 font-family:PDF 原字体名优先(本机装了即还原原字形),
+ * FontClass 映射字体兜底(原字体未安装时仍保证视觉接近)。
+ */
+export function pdfFirstFontFamily(
+  fontName: string | undefined | null,
+  classCss: string
+): string {
+  const cands = pdfFontFamilyCandidates(fontName);
+  if (!cands) return classCss;
+  return cands.map((n) => `"${n}"`).join(', ') + ', ' + classCss;
+}
+
 /**
  * FontClass -> 本地字体文件 URL(供 @font-face 用)。
  * Regular + Bold 都有,cjk-sans 和 cjk-serif 各自独立。

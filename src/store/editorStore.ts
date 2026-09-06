@@ -10,16 +10,29 @@ export interface EditorState {
   tool: Tool;
   totalPages: number;
   selectedOverlayId: string | null;
+  /** 打开 PDF 时是否自动"全文格式化"(全部文本按项目字体重排)。 */
+  fullReformat: boolean;
 
   setCurrentPage: (index: number) => void;
   setZoom: (zoom: number) => void;
   setTool: (tool: Tool) => void;
   setTotalPages: (n: number) => void;
   setSelectedOverlayId: (id: string | null) => void;
+  setFullReformat: (v: boolean) => void;
   nextPage: () => void;
   prevPage: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
+}
+
+const FULL_REFORMAT_KEY = 'minipdf.fullReformat';
+
+function loadFullReformat(): boolean {
+  try {
+    return localStorage.getItem(FULL_REFORMAT_KEY) === '1';
+  } catch {
+    return false;
+  }
 }
 
 function findClosestZoom(target: number, base: readonly number[] = ZOOM_LEVELS): number {
@@ -41,10 +54,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   tool: 'edit-text',
   totalPages: 0,
   selectedOverlayId: null,
+  fullReformat: loadFullReformat(),
 
   setCurrentPage: (index) =>
     set(() => ({
       currentPageIndex: Math.max(0, Math.min(Math.max(0, get().totalPages - 1), index)),
+      // 切页时清除选中:上一页的选中 id 对新页面无效,
+      // 否则 Inspector 会显示错误的属性、块也会带着残留高亮。
+      selectedOverlayId: null,
     })),
 
   setZoom: (zoom) => set({ zoom: Math.max(0.1, Math.min(8, zoom)) }),
@@ -55,14 +72,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   setSelectedOverlayId: (id) => set({ selectedOverlayId: id }),
 
+  setFullReformat: (v) => {
+    try {
+      localStorage.setItem(FULL_REFORMAT_KEY, v ? '1' : '0');
+    } catch {
+      /* 忽略存储失败(隐私模式等) */
+    }
+    set({ fullReformat: v });
+  },
+
   nextPage: () => {
     const { currentPageIndex, totalPages } = get();
-    set({ currentPageIndex: Math.min(totalPages - 1, currentPageIndex + 1) });
+    set({
+      currentPageIndex: Math.min(totalPages - 1, currentPageIndex + 1),
+      selectedOverlayId: null,
+    });
   },
 
   prevPage: () => {
     const { currentPageIndex } = get();
-    set({ currentPageIndex: Math.max(0, currentPageIndex - 1) });
+    set({ currentPageIndex: Math.max(0, currentPageIndex - 1), selectedOverlayId: null });
   },
 
   zoomIn: () => {

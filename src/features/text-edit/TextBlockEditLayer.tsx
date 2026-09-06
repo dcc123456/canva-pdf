@@ -32,6 +32,8 @@ export function TextBlockEditLayer({ page }: TextBlockEditLayerProps) {
   const setSelectedOverlayId = useEditorStore((s) => s.setSelectedOverlayId);
   const overlays = useDocumentStore((s) => s.overlays);
   const removeOverlay = useDocumentStore((s) => s.removeOverlay);
+  // 采样到的块局部页面背景色:编辑态用它替代白色,彩色页面底色不跳变。
+  const pageBgColors = useDocumentStore((s) => s.pageBgColors);
 
   const editingIdRef = useRef<string | null>(null);
   // commitFnRef: RichTextEditor 注册的提交函数,父组件可手动调用
@@ -90,6 +92,9 @@ export function TextBlockEditLayer({ page }: TextBlockEditLayerProps) {
     newText: string,
     segments?: RichTextSegment[]
   ) {
+    // 失焦提交后不再保留选中态:用户点空白处提交时,前一个块应取消选中。
+    // 若本次失焦由点击另一块触发,该块的 onPointerDown 会立即重新选中它。
+    setSelectedOverlayId(null);
     if (!block) {
       editingIdRef.current = null;
       commitFnRef.current = null;
@@ -131,6 +136,9 @@ export function TextBlockEditLayer({ page }: TextBlockEditLayerProps) {
               height: b.bbox.h * zoom,
               pointerEvents: 'auto',
               cursor: 'text',
+              // 编辑态底色 = 渲染时采样到的该块局部页面背景(导出 whiteout
+              // 也用同一颜色),保证进入编辑时视觉不跳变。
+              background: isEditing ? (pageBgColors[b.id] ?? '#ffffff') : undefined,
             }}
             onPointerDown={(e) => {
               if (isEditing) return;
@@ -165,6 +173,7 @@ export function TextBlockEditLayer({ page }: TextBlockEditLayerProps) {
                 onCancel={() => {
                   editingIdRef.current = null;
                   commitFnRef.current = null;
+                  setSelectedOverlayId(null);
                   forceUpdate();
                 }}
                 registerCommit={registerCommit}

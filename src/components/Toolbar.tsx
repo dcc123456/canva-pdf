@@ -60,8 +60,10 @@ export function Toolbar({ onPickImage, onOpenSignature }: ToolbarProps) {
       onOpenSignature();
       return;
     }
+    // 重复点击已激活的工具时不重复检测(当前页已有块时检测会直接跳过)。
+    const prevTool = useEditorStore.getState().tool;
     setTool(t);
-    if (t === 'edit-text' || t === 'form') {
+    if ((t === 'edit-text' || t === 'form') && prevTool !== t) {
       void runEngineDetection(t);
     }
   }

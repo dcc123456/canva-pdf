@@ -57,6 +57,9 @@ export function useAutoDetectTextBlocks(): void {
     if (detectionVisible) return;
 
     detectedPagesRef.current.add(currentPageId);
-    void runEngineDetection('edit-text');
+    // 检测失败时取消标记,下次回到该页自动重试(比如引擎首次加载失败)。
+    void runEngineDetection('edit-text').then((ok) => {
+      if (!ok) detectedPagesRef.current.delete(currentPageId);
+    });
   }, [tool, pdfBytes, currentPageId, overlays, detectionVisible]);
 }

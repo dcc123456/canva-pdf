@@ -20,10 +20,13 @@ export interface EngineState {
   detectionVisible: boolean;
   detectionProgress: number;
   detectionLabel: string;
+  /** LoadingOverlay 标题(如"正在全文格式化");null 时用默认标题。 */
+  detectionTitle: string | null;
   engineStatusMessage: string | null;
   setDetectionVisible: (v: boolean) => void;
   setDetectionProgress: (p: number) => void;
   setDetectionLabel: (l: string) => void;
+  setDetectionTitle: (t: string | null) => void;
   setEngineStatusMessage: (msg: string | null) => void;
 }
 
@@ -40,9 +43,11 @@ export const useEngineStore = create<EngineState>((set) => ({
   detectionVisible: false,
   detectionProgress: 0,
   detectionLabel: '初始化',
+  detectionTitle: null,
   engineStatusMessage: null,
   setDetectionVisible: (v) => set({ detectionVisible: v }),
   setDetectionProgress: (p) => set({ detectionProgress: p }),
   setDetectionLabel: (l) => set({ detectionLabel: l }),
+  setDetectionTitle: (t) => set({ detectionTitle: t }),
   setEngineStatusMessage: (msg) => set({ engineStatusMessage: msg }),
 }));

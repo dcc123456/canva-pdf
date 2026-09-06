@@ -19,6 +19,7 @@ import { useEditorStore } from './store/editorStore';
 import { useTemplateStore } from './store/templateStore';
 import { useEngineStore } from './store/engineStore';
 import { useHistoryStore } from './store/historyStore';
+import { reformatDocument } from './features/text-edit/reformatDocument';
 import type { PageMeta } from './core/types';
 import { toast } from './utils/toast';
 
@@ -112,6 +113,42 @@ function App() {
       setTotalPages(document.numPages);
       setCurrentPage(0);
       toast.success(`已打开 ${file.name}`);
+
+      // 全文格式化(开关启用时):把全部文本按项目字体重排一遍,
+      // 保证整份文档样式统一。异步分页执行,进度条反馈;失败时
+      // 保留原字节继续编辑。
+      if (useEditorStore.getState().fullReformat) {
+        const eng = useEngineStore.getState();
+        eng.setDetectionVisible(true);
+        eng.setDetectionProgress(0);
+        eng.setDetectionLabel('准备中');
+        eng.setDetectionTitle('正在全文格式化');
+        eng.setEngineStatusMessage(null);
+        try {
+          const { bytes: newBytes, blocks } = await reformatDocument({
+            pdfBytes,
+            pages: newPages,
+            onProgress: (p, label) => {
+              eng.setDetectionProgress(p);
+              if (label) eng.setDetectionLabel(label);
+            },
+          });
+          // 全部文本块直接写入 overlay:后续各页无需再检测,
+          // 且编辑任一块的"原文"就是格式化后的文本。
+          useDocumentStore.getState().setOverlays(blocks);
+          setPdfBytes(newBytes);
+          // 丢弃原 pdfjs 文档,让 Viewer 从格式化后的字节重新加载。
+          setDoc(null);
+          toast.success('全文已按项目格式化');
+        } catch (err) {
+          console.error('[App] 全文格式化失败,保留原 PDF 样式:', err);
+          toast.error('全文格式化失败,已保留原样式');
+        } finally {
+          eng.setDetectionProgress(1);
+          eng.setDetectionTitle(null);
+          window.setTimeout(() => eng.setDetectionVisible(false), 400);
+        }
+      }
     } catch (err) {
       console.error(err);
       const msg = err instanceof Error ? err.message : String(err);

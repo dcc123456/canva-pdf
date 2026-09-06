@@ -15,26 +15,34 @@ export type DetectionKind = 'edit-text' | 'form';
 
 /**
  * Run engine detection for the given kind. For `edit-text`, detects text
- * blocks for the current page (wiping previous text-block overlays for that
- * page first). For `form`, detects form fields across all pages.
+ * blocks for the current page. For `form`, detects form fields across all
+ * pages.
+ *
+ * 对 `edit-text`:如果当前页已有 text-block overlay(包括用户已编辑过的),
+ * 直接跳过 —— 重新检测会先 wipe 该页所有 text-block,把用户的编辑一并
+ * 清掉。此时返回 true(视为已就绪),想重新检测可先删除该页的块。
  *
  * Updates the engineStore detection UI state (progress / label / status) so
  * the TopBar LoadingOverlay reflects progress.
+ *
+ * @returns whether detection succeeded (or was skipped as already done).
+ * Callers use false to allow a later retry (e.g. the auto-detect hook
+ * un-marks the page so detection runs again on the next visit).
  */
-export async function runEngineDetection(t: DetectionKind): Promise<void> {
-  const { pdfBytes, pages, addOverlay, removeOverlay } =
-    useDocumentStore.getState();
+export async function runEngineDetection(t: DetectionKind): Promise<boolean> {
+  const { pdfBytes, pages, addOverlay } = useDocumentStore.getState();
   const eng = useEngineStore.getState();
 
   if (!pdfBytes || pages.length === 0) {
     eng.setEngineStatusMessage('请先打开 PDF');
     window.setTimeout(() => eng.setEngineStatusMessage(null), 3000);
-    return;
+    return false;
   }
 
   eng.setDetectionVisible(true);
   eng.setDetectionProgress(0);
   eng.setDetectionLabel('初始化引擎');
+  eng.setDetectionTitle('正在检测文本块');
   eng.setEngineStatusMessage(null);
 
   try {
@@ -44,14 +52,16 @@ export async function runEngineDetection(t: DetectionKind): Promise<void> {
     if (t === 'edit-text') {
       const pageIndex = useEditorStore.getState().currentPageIndex;
       const currentPage = pages[pageIndex];
-      if (currentPage) {
-        // Wipe previous text-block overlays for this page so detection is idempotent.
+      // 该页已有 text-block(检测过或含编辑)时不再重测,保护用户编辑。
+      const hasExistingBlocks =
+        currentPage &&
         useDocumentStore
           .getState()
-          .overlays.filter(
+          .overlays.some(
             (o) => o.type === 'text-block' && o.pageId === currentPage.id
-          )
-          .forEach((o) => removeOverlay(o.id));
+          );
+      if (hasExistingBlocks) {
+        return true;
       }
       const { blocks } = await detectTextBlocksForPage({
         pageIndex,
@@ -89,6 +99,7 @@ export async function runEngineDetection(t: DetectionKind): Promise<void> {
         }
       }
       eng.setEngineStatusMessage(`检测到 ${blocks.length} 个文本块`);
+      return true;
     } else {
       // form detection
       const fields = await detectFormFields({
@@ -113,15 +124,18 @@ export async function runEngineDetection(t: DetectionKind): Promise<void> {
         });
       }
       eng.setEngineStatusMessage(`检测到 ${fields.length} 个表单字段`);
+      return true;
     }
   } catch (err) {
     console.error(err);
     const msg = err instanceof Error ? err.message : String(err);
     eng.setEngineStatusMessage(`引擎调用失败: ${msg}`);
     toast.error(`引擎调用失败: ${msg}`);
+    return false;
   } finally {
     eng.setDetectionProgress(1);
     eng.setDetectionLabel('完成');
+    eng.setDetectionTitle(null);
     window.setTimeout(() => eng.setDetectionVisible(false), 400);
     window.setTimeout(() => eng.setEngineStatusMessage(null), 3000);
   }

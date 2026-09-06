@@ -28,3 +28,6 @@ dist-ssr
 
 # Secrets (never commit)
 secrets/
+
+# 用户本地测试/个人 PDF,不提交(模板 PDF 在 public/templates,不受影响)
+/*.pdf

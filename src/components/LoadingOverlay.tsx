@@ -8,6 +8,8 @@ export interface LoadingOverlayProps {
   label?: string;
   visible: boolean;
   error?: string | null;
+  /** 弹窗标题(如"正在全文格式化"),缺省为引擎加载标题。 */
+  title?: string;
   onDismiss?: () => void;
 }
 
@@ -16,6 +18,7 @@ export function LoadingOverlay({
   label,
   visible,
   error,
+  title,
   onDismiss,
 }: LoadingOverlayProps) {
   if (!visible && !error) return null;
@@ -30,7 +33,7 @@ export function LoadingOverlay({
     >
       <div className="w-[320px] rounded-lg border border-gray-200 bg-white p-5 shadow-lg">
         <div className="mb-3 text-sm font-semibold text-gray-800">
-          {error ? '引擎加载失败' : '正在加载 PDF 引擎'}
+          {error ? '引擎加载失败' : (title ?? '正在加载 PDF 引擎')}
         </div>
         {!error && (
           <>

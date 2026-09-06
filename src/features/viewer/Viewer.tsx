@@ -215,6 +215,12 @@ export function Viewer({ doc }: ViewerProps) {
                     top: '50%',
                     transform: 'translate(-50%, -50%)',
                   }}
+                  onPointerDown={() => {
+                    // 点击页面空白处(未被任何块/元素 stopPropagation)时
+                    // 取消选中。编辑文字模式下尤其重要:失焦提交后前一个
+                    // 块不应保持选中。
+                    setSelectedOverlayId(null);
+                  }}
                 >
                   <OverlayLayer page={overlayPage} />
                   <FormFieldOverlay page={overlayPage} />

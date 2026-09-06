@@ -13,6 +13,27 @@ export async function applyPages(
   pages: PageMeta[],
   originalBytes: Uint8Array
 ): Promise<void> {
+  const pageCount = doc.getPageCount();
+
+  // 快路径:页结构未变(数量一致、顺序一致、无空白页)时,直接在现有
+  // 页上应用旋转即可。copyPages 会按页深拷贝资源字典 -- 文档含大体积
+  // 嵌入字体(如"全文格式化"后的 ~35MB)时,每页复制一份,导出体积
+  // 和耗时成倍膨胀(6 页 × 35MB ≈ 200MB)。
+  const structureUnchanged =
+    pageCount === pages.length &&
+    pages.every((meta, i) => !meta.isBlank && meta.index === i);
+  if (structureUnchanged) {
+    for (let i = 0; i < pages.length; i += 1) {
+      const page = doc.getPage(i);
+      const current = page.getRotation().angle;
+      const wanted = ((pages[i].rotation % 360) + 360) % 360;
+      if (current !== wanted) {
+        page.setRotation(degrees(wanted));
+      }
+    }
+    return;
+  }
+
   // Use a throwaway source document to satisfy `copyPages`.
   const source = await PDFDocument.load(originalBytes);
   const sourcePageCount = source.getPageCount();

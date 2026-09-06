@@ -19,7 +19,7 @@ import type {
 import type { FontClass, RichTextSegment } from '../types';
 import { pdfLibFallbackEngine as pdfLibFallback } from '../engine/pdfLibFallback';
 import { loadMupdf, type MupdfNs } from './loader';
-import { classifyFontWithFallback } from '../engine/fontClassify';
+import { classifyFontWithFallback, isSymbolFontName } from '../engine/fontClassify';
 import { extractTextColors, matchColorsToAtoms } from '../pdf/textColor';
 import { loadDocument } from '../pdf/loader';
 
@@ -44,6 +44,49 @@ interface MupdfStextJson {
       text: string;
     }>;
   }>;
+}
+
+// ---------- PUA / symbol-font character mapping ------------------------------
+
+// Windows 符号字体(Wingdings/Webdings/Symbol 等)把 bullet/符号编码在
+// Unicode 私用区(U+E000-U+F8FF)。MuPDF 会原样吐出 PUA 码点,这些字符
+// 在编辑器和导出重画时都会渲染成乱码(方块)。这里把常见 bullet 映射回
+// 真实 Unicode;符号字体里无法识别的 PUA 字符直接丢弃(保留只会显示方块)。
+const PUA_CHAR_MAP: Record<string, string> = {
+  '': ' ', // Wingdings space
+  '': '●', // Wingdings l  实心圆 bullet (●)
+  '': '❍', // Wingdings m  阴影圆 (❍)
+  '': '■', // Wingdings n  实心方块 (■)
+  '': '□', // Wingdings p  空心方块 (□)
+  '': '◆', // Wingdings u  实心菱形 (◆)
+  '': '❖', // Wingdings v  菱形 (❖)
+  '': '▪', // Wingdings §  小方块 bullet (▪)
+  '': '➢', // Wingdings Ø  箭头 bullet (➢)
+  '': '•', // Symbol ·     圆点 bullet (•)
+  '': '✓', // Wingdings ü  对勾 (✓)
+};
+
+function sanitizeSymbolChars(text: string, fontName: string): string {
+  if (!text) return text;
+  let out = '';
+  let hasPua = false;
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code >= 0xe000 && code <= 0xf8ff) {
+      hasPua = true;
+      const mapped = PUA_CHAR_MAP[ch];
+      if (mapped !== undefined) {
+        out += mapped;
+      } else if (!isSymbolFontName(fontName)) {
+        // 非符号字体的 PUA 字符可能是自定义编码,原样保留。
+        out += ch;
+      }
+      // 符号字体中未映射的 PUA 字符丢弃,避免乱码。
+    } else {
+      out += ch;
+    }
+  }
+  return hasPua ? out : text;
 }
 
 // ---------- detectTextBlocks ------------------------------------------------
@@ -74,23 +117,36 @@ async function detectTextBlocksImpl(
         italic: boolean;
         fontClass: FontClass;
         color?: string;
+        /** 符号字体映射字符的绘制字号(=原字符推进宽度),size 仅用于聚类。 */
+        drawSize?: number;
       }
       const atoms: AtomLine[] = [];
       let atomCounter = 0;
       for (const block of json.blocks) {
         if (block.type !== 'text' || !block.lines) continue;
         for (const line of block.lines) {
-          // WYSIWYG: 保留普通空格和制表符(\t),只去掉换行/控制符。
-          // \t 在 PDF 中是合法的行内空白,必须保留。
-          const text = (line.text ?? '').replace(/[\r\n\v\f]+/g, '');
-          if (text.length === 0) continue;
-          const baseline = (line.y ?? line.bbox.y + line.bbox.h) | 0;
           const fi = line.font;
           const fName = (fi?.name ?? fi?.family ?? 'embedded');
+          // WYSIWYG: 保留普通空格和制表符(\t),只去掉换行/控制符。
+          // \t 在 PDF 中是合法的行内空白,必须保留。
+          // 同时把符号字体(Wingdings 等)的 PUA bullet 映射回真实 Unicode,
+          // 否则编辑/重画时会显示乱码。
+          const rawText = (line.text ?? '').replace(/[\r\n\v\f]+/g, '');
+          const text = sanitizeSymbolChars(rawText, fName);
+          if (text.length === 0) continue;
+          const baseline = (line.y ?? line.bbox.y + line.bbox.h) | 0;
           const fLower = fName.toLowerCase();
           const wLower = (fi?.weight ?? '').toLowerCase();
           const sLower = (fi?.style ?? '').toLowerCase();
           const fc = classifyFontWithFallback(fName, text);
+          // 符号字体字符被映射后(如 Wingdings ●),原字符的推进宽度
+          // (bbox.w,7pt)与映射字符在 CJK 字体里的全角宽度(=1em,10pt)
+          // 不一致,按原字号重画圆点会变大。用原推进宽度作为该 segment
+          // 的字号,映射字符在 CJK 字体中恰好 1em,绘制宽度即可还原。
+          const drawSize =
+            text !== rawText && isSymbolFontName(fName) && line.bbox.w > 0
+              ? line.bbox.w
+              : undefined;
           atoms.push({
             id: `atom-${pageIndex}-${atomCounter++}`,
             bbox: { ...line.bbox },
@@ -101,6 +157,7 @@ async function detectTextBlocksImpl(
             bold: fLower.includes('bold') || wLower.includes('bold') || wLower === '700',
             italic: fLower.includes('italic') || fLower.includes('oblique') || sLower.includes('italic') || sLower.includes('oblique'),
             fontClass: fc,
+            drawSize,
           });
         }
       }
@@ -205,7 +262,35 @@ async function detectTextBlocksImpl(
         line.atoms.sort((a, b) => a.bbox.x - b.bbox.x);
         // WYSIWYG: atoms 已包含 MuPDF span 自带的空格,直接拼接即可,
         // 不再 trim -- 保留行首/行尾真实空格。
-        line.text = line.atoms.map((a) => a.text).join('');
+        //
+        // 但 atom 之间的"可见间隙"(如 Wingdings 圆点与正文之间常有
+        // 1-2 个字宽的空白,而两侧文本里没有空格字符)不在任何 atom 的
+        // 文本里 -- 编辑/重画只按拼接后的字符串排版,不还原每个 atom
+        // 的原始坐标,间隙会直接消失。这里按间隙宽度插入等量空格近似
+        // 还原(思源字体空格实测 0.224-0.256em,按 0.25em 估算;
+        // 向下取整避免总宽超出 bbox 触发重排换行)。
+        let joined = '';
+        line.atoms.forEach((a, i) => {
+          if (i > 0) {
+            const prev = line.atoms[i - 1];
+            const gap = a.bbox.x - (prev.bbox.x + prev.bbox.w);
+            const gapThreshold = a.size * 0.25;
+            if (
+              gap > gapThreshold &&
+              !/\s$/.test(prev.text) &&
+              !/^\s/.test(a.text)
+            ) {
+              const spaceW = Math.max(0.5, a.size * 0.25);
+              const nSpaces = Math.min(8, Math.max(1, Math.floor(gap / spaceW)));
+              // 空格写进下一个 atom 的文本(跟随其样式 segment),而不是
+              // 只加在 line.text 上 -- 编辑器/重画都按 segments 排版,
+              // 只加在 line.text 的话一进编辑器空格就会丢。
+              a.text = ' '.repeat(nSpaces) + a.text;
+            }
+          }
+          joined += a.text;
+        });
+        line.text = joined;
         line.x = Math.min(...line.atoms.map((a) => a.bbox.x));
         const maxR = Math.max(...line.atoms.map((a) => a.bbox.x + a.bbox.w));
         line.w = maxR - line.x;
@@ -315,7 +400,13 @@ async function detectTextBlocksImpl(
             if (atom.bold) seg.bold = true;
             if (atom.italic) seg.italic = true;
             if (atom.font) seg.fontFamily = atom.font;
-            if (atom.size) seg.fontSize = Math.round(atom.size * 100) / 100;
+            // 符号字体映射字符(如 ●)用推进宽度换算的绘制字号,
+            // 其余用原字号。
+            if (atom.size) {
+              seg.fontSize = Math.round(
+                (atom.drawSize ?? atom.size) * 100
+              ) / 100;
+            }
             if (atom.fontClass) seg.fontClass = atom.fontClass;
             if (atom.color) seg.color = atom.color;
             rawSegs.push(seg);
