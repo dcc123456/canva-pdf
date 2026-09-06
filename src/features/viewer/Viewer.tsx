@@ -282,10 +282,14 @@ function PageView({
     };
   }, [doc, visible, zoom, page.rotation, page.id, pageNumber]);
 
-  // 块背景色采样:渲染完成 + 块集合变化时都要重采(渲染完成时检测可能
-  // 尚未跑完,只采一次会永远采到空白)。颜色取块四边外扩 3px 的 8 点 +
-  // 四角内缩 2px 的 4 点共 12 个采样点的众数 —— 文字可能压在彩色底板上,
-  // 单点采样(左上外 2px)会采到板外颜色,编辑后白底就"变白"。
+  // 块背景色采样 + 底板矩形测量:渲染完成 + 块集合变化时都要重采(渲染
+  // 完成时检测可能尚未跑完,只采一次会永远采到空白)。
+  // 颜色取块四边外扩 3px 的 8 点 + 四角内缩 2px 的 4 点共 12 个采样点的
+  // 众数 —— 文字可能压在彩色底板上,单点采样(左上外 2px)会采到板外
+  // 颜色,编辑后白底就"变白"。
+  // 底板矩形:彩色底板通常比文字 bbox 大(含内边距,实测可达 25px+),
+  // 在 ±35px 帧内扫描与众数色一致的像素范围,存入 panelRects 供移动时
+  // 白底完整覆盖底板。
   const overlays = useDocumentStore((s) => s.overlays);
   const pageBlockIdsKey = overlays
     .filter((o) => o.type === 'text-block' && o.pageId === page.id)
@@ -302,10 +306,11 @@ function PageView({
     for (const o of store.overlays) {
       if (o.type !== 'text-block' || o.pageId !== page.id) continue;
       const b = o.originalBbox;
-      const fx0 = Math.max(0, Math.floor((b.x - 5) * k));
-      const fy0 = Math.max(0, Math.floor((b.y - 5) * k));
-      const fx1 = Math.min(canvas.width, Math.ceil((b.x + b.w + 5) * k));
-      const fy1 = Math.min(canvas.height, Math.ceil((b.y + b.h + 5) * k));
+      // 帧:底板可能比 bbox 大几十 px,取 ±35px
+      const fx0 = Math.max(0, Math.floor((b.x - 35) * k));
+      const fy0 = Math.max(0, Math.floor((b.y - 35) * k));
+      const fx1 = Math.min(canvas.width, Math.ceil((b.x + b.w + 35) * k));
+      const fy1 = Math.min(canvas.height, Math.ceil((b.y + b.h + 35) * k));
       const wpx = fx1 - fx0;
       const hpx = fy1 - fy0;
       if (wpx <= 0 || hpx <= 0) continue;
@@ -350,6 +355,49 @@ function PageView({
           }
         }
         store.setPageBgColor(o.id, best);
+        // 测量底板矩形:白底(页面底色)无需测量。
+        if (best.toLowerCase() === '#ffffff') {
+          store.setPanelRect(o.id, null);
+          continue;
+        }
+        const ref = {
+          r: parseInt(best.slice(1, 3), 16),
+          g: parseInt(best.slice(3, 5), 16),
+          b: parseInt(best.slice(5, 7), 16),
+        };
+        let minX: number | null = null;
+        let maxX: number | null = null;
+        let minY: number | null = null;
+        let maxY: number | null = null;
+        for (let yy = 0; yy < hpx; yy++) {
+          for (let xx = 0; xx < wpx; xx++) {
+            const i = (yy * wpx + xx) * 4;
+            if (
+              Math.abs(img.data[i] - ref.r) <= 12 &&
+              Math.abs(img.data[i + 1] - ref.g) <= 12 &&
+              Math.abs(img.data[i + 2] - ref.b) <= 12
+            ) {
+              if (minX === null || xx < minX) minX = xx;
+              if (maxX === null || xx > maxX) maxX = xx;
+              if (minY === null || yy < minY) minY = yy;
+              if (maxY === null || yy > maxY) maxY = yy;
+            }
+          }
+        }
+        if (minX === null || maxX === null || minY === null || maxY === null) {
+          store.setPanelRect(o.id, null);
+          continue;
+        }
+        const iminX = minX;
+        const imaxX = maxX;
+        const iminY = minY;
+        const imaxY = maxY;
+        store.setPanelRect(o.id, {
+          x: (fx0 + iminX) / k,
+          y: (fy0 + iminY) / k,
+          w: (imaxX - iminX + 1) / k,
+          h: (imaxY - iminY + 1) / k,
+        });
       } catch {
         /* tainted canvas or out of bounds; skip */
       }

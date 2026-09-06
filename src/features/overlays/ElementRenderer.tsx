@@ -42,6 +42,10 @@ function renderSegments(
 export function ElementRenderer({ overlay, selected = false }: ElementRendererProps) {
   const pageBgColor =
     useDocumentStore((s) => s.pageBgColors[overlay.id]) || '#ffffff';
+  // 块底板矩形(渲染像素实测,可能比文字 bbox 大):移动块时白底需
+  // 覆盖整个底板,否则残留彩色边框。
+  const panelRect =
+    useDocumentStore((s) => s.panelRects[overlay.id]) || null;
   switch (overlay.type) {
     case 'highlight': {
       return (
@@ -196,20 +200,44 @@ export function ElementRenderer({ overlay, selected = false }: ElementRendererPr
       const showOverlay = edited || selected;
       const lh = overlay.lineHeight || 1.2;
       const align = overlay.align || 'left';
-      // 白底颜色:未移动的块用采样底色(保住彩色底板);移动过的块原位置
-      // 应恢复页面底色(白),底色跟随块走到新位置。
+      // 白底颜色与范围:
+      //  * 未移动的块:采样底色画 originalBbox(+pad),保住彩色底板;
+      //  * 移动过的块:原位置应恢复页面底色(白),且白底必须覆盖整个
+      //    底板矩形(panelRect,含内边距,可能比文字 bbox 大 25px+),
+      //    否则底板边缘残留一圈彩色。
       const whiteoutFill = moved ? '#ffffff' : pageBgColor;
+      const whiteRect = moved
+        ? (() => {
+            const base = {
+              x: overlay.originalBbox.x - 1,
+              y: overlay.originalBbox.y - overlay.originalBbox.h * 0.15,
+              r: overlay.originalBbox.x + overlay.originalBbox.w + 1,
+              b:
+                overlay.originalBbox.y +
+                overlay.originalBbox.h * 1.15,
+            };
+            if (panelRect) {
+              return {
+                x: Math.min(base.x, panelRect.x - 1),
+                y: Math.min(base.y, panelRect.y - 1),
+                r: Math.max(base.r, panelRect.x + panelRect.w + 1),
+                b: Math.max(base.b, panelRect.y + panelRect.h + 1),
+              };
+            }
+            return base;
+          })()
+        : null;
       return (
         <>
           {/* 白底画在 originalBbox:盖住 pdfjs canvas 上原位置的原字。
               加 pad(与导出端 whiteout 的 padX/padY 一致):字形(尤其
               大写字母)边缘会溢出检测 bbox 1-2px,不留 pad 会露出原字残影。 */}
-          {showOverlay && (
+          {showOverlay && whiteRect && (
             <rect
-              x={overlay.originalBbox.x - 1}
-              y={overlay.originalBbox.y - overlay.originalBbox.h * 0.15}
-              width={overlay.originalBbox.w + 2}
-              height={overlay.originalBbox.h * 1.3}
+              x={whiteRect.x}
+              y={whiteRect.y}
+              width={whiteRect.r - whiteRect.x}
+              height={whiteRect.b - whiteRect.y}
               fill={whiteoutFill}
               pointerEvents="none"
             />

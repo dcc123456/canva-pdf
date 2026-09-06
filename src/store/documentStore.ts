@@ -5,7 +5,7 @@
 import { create } from 'zustand';
 import { produceWithPatches, type Patch } from 'immer';
 import { v4 as uuidv4 } from 'uuid';
-import type { OverlayItem, PageMeta } from '../core/types';
+import type { OverlayItem, PageMeta, Rect } from '../core/types';
 import { useHistoryStore } from './historyStore';
 
 export interface DocumentState {
@@ -15,6 +15,13 @@ export interface DocumentState {
   pdfName: string;
   /** Per-page background color (hex), sampled from the rendered canvas. */
   pageBgColors: Record<string, string>;
+  /**
+   * 块的"底板矩形"(PDF y-down 坐标):文字压在彩色底板上时,从渲染
+   * 像素实测的底板范围(可能比文字 bbox 大,含内边距)。移动块后白底
+   * 需覆盖整个底板,否则残留彩色边框。
+   */
+  panelRects: Record<string, Rect>;
+  setPanelRect: (overlayId: string, rect: Rect | null) => void;
 
   setPages: (pages: PageMeta[]) => void;
   addPage: (page?: Partial<PageMeta>) => void;
@@ -75,6 +82,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
   pdfBytes: null,
   pdfName: '',
   pageBgColors: {},
+  panelRects: {},
 
   setPages: (pages) =>
     applyWithHistory(set, (draft) => {
@@ -86,6 +94,18 @@ export const useDocumentStore = create<DocumentState>((set) => ({
   setPageBgColor: (pageId, color) =>
     // No history: bgColor detection is metadata, not a user action.
     set((state) => ({ pageBgColors: { ...state.pageBgColors, [pageId]: color } })),
+
+  setPanelRect: (overlayId, rect) =>
+    // No history: panel rect measurement is metadata, not a user action.
+    set((state) => {
+      const next = { ...state.panelRects };
+      if (rect) {
+        next[overlayId] = rect;
+      } else {
+        delete next[overlayId];
+      }
+      return { panelRects: next };
+    }),
 
   addPage: (page) =>
     applyWithHistory(set, (draft) => {

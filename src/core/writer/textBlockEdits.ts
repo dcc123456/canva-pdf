@@ -19,7 +19,7 @@
 import { PDFDocument, PDFPage, PDFOperator, StandardFonts, rgb } from 'pdf-lib';
 import type { PDFFont } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import type { FontClass, PageMeta, TextBlockItem } from '../types';
+import type { FontClass, PageMeta, Rect, TextBlockItem } from '../types';
 import { hexToRgb, wrapText, alignedX } from './helpers';
 import { loadCjkFontBytesForVariant, containsNonAscii, type FontWeight } from './cjkFont';
 import { collectWhiteoutQuads, type Quad } from './textQuad';
@@ -99,6 +99,8 @@ export interface ApplyTextBlockRedrawsOptions {
   redacted: boolean;
   /** 块局部背景色(画布采样):白底兜底时使用,彩色底板不变白。 */
   pageBgColors?: Record<string, string>;
+  /** 块底板矩形(渲染像素实测):移动块时原位置白底需覆盖整个底板。 */
+  panelRects?: Record<string, Rect>;
 }
 
 /**
@@ -218,16 +220,25 @@ export async function applyTextBlockRedraws(
 
     // 移动过的块:原位置画白矩形,盖住底板图形(若 redact 路径底板是
     // 矢量图形不会被删除,不盖的话原位置留一块与块同色的空占位)。
+    // 白矩形覆盖底板实测矩形 ∪ 文字 bbox(底板可能比 bbox 大 25px+)。
     if (moved && redacted) {
+      const ob = block.originalBbox;
+      const pr = options.panelRects?.[block.id] || null;
+      const rx0 = Math.min(ob.x - 1, pr ? pr.x - 1 : Infinity);
+      const ry0 = Math.min(
+        ob.y - ob.h * 0.15,
+        pr ? pr.y - 1 : Infinity
+      );
+      const rx1 = Math.max(ob.x + ob.w + 1, pr ? pr.x + pr.w + 1 : -Infinity);
+      const ry1 = Math.max(
+        ob.y + ob.h * 1.15,
+        pr ? pr.y + pr.h + 1 : -Infinity
+      );
       page.drawRectangle({
-        x: block.originalBbox.x - 1,
-        y:
-          pageHeight -
-          block.originalBbox.y -
-          block.originalBbox.h -
-          block.originalBbox.h * 0.15,
-        width: block.originalBbox.w + 2,
-        height: block.originalBbox.h * 1.3,
+        x: rx0,
+        y: pageHeight - ry1,
+        width: rx1 - rx0,
+        height: ry1 - ry0,
         color: rgb(1, 1, 1),
         borderWidth: 0,
         opacity: 1,

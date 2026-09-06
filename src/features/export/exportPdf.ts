@@ -147,6 +147,7 @@ export async function exportPdf(
       textBlocks: editedTextBlocks,
       redacted,
       pageBgColors: useDocumentStore.getState().pageBgColors,
+      panelRects: useDocumentStore.getState().panelRects,
     });
   }
 
