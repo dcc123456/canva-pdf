@@ -257,6 +257,7 @@ function FontSelector({
 export function Inspector() {
   const selectedId = useEditorStore((s) => s.selectedOverlayId);
   const setSelectedOverlayId = useEditorStore((s) => s.setSelectedOverlayId);
+  const setInspectorCollapsed = useEditorStore((s) => s.setInspectorCollapsed);
   const overlays = useDocumentStore((s) => s.overlays);
   const updateOverlay = useDocumentStore((s) => s.updateOverlay);
   const removeOverlay = useDocumentStore((s) => s.removeOverlay);
@@ -269,7 +270,17 @@ export function Inspector() {
   if (!item) {
     return (
       <aside className="flex h-full w-[260px] flex-col gap-2 overflow-y-auto border-l bg-gray-50 p-3 text-xs text-gray-500">
-        <div className="text-sm font-semibold text-gray-700">属性</div>
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold text-gray-700">属性</div>
+          <button
+            type="button"
+            onClick={() => setInspectorCollapsed(true)}
+            title="收起属性面板"
+            className="rounded px-1.5 py-0.5 text-xs text-gray-500 hover:bg-gray-200"
+          >
+            ⟩
+          </button>
+        </div>
         <div className="rounded border border-dashed border-gray-300 bg-white p-4 text-center">
           未选中任何叠加元素
         </div>
@@ -292,7 +303,17 @@ export function Inspector() {
   return (
     <aside className="flex h-full w-[260px] flex-col gap-3 overflow-y-auto border-l bg-gray-50 p-3 text-xs">
       <div className="flex items-center justify-between">
-        <div className="text-sm font-semibold text-gray-700">属性</div>
+        <div className="flex items-center gap-1">
+          <div className="text-sm font-semibold text-gray-700">属性</div>
+          <button
+            type="button"
+            onClick={() => setInspectorCollapsed(true)}
+            title="收起属性面板"
+            className="rounded px-1.5 py-0.5 text-xs text-gray-500 hover:bg-gray-200"
+          >
+            ⟩
+          </button>
+        </div>
         <button
           type="button"
           onClick={() => {

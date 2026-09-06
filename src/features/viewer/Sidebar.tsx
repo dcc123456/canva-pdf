@@ -312,7 +312,7 @@ export interface SidebarProps {
 export function Sidebar({ doc }: SidebarProps) {
   const currentPageIndex = useEditorStore((s) => s.currentPageIndex);
   const setCurrentPage = useEditorStore((s) => s.setCurrentPage);
-  const setTotalPages = useEditorStore((s) => s.setTotalPages);
+  const setSidebarCollapsed = useEditorStore((s) => s.setSidebarCollapsed);
   const pages = useDocumentStore((s) => s.pages);
   const addPage = useDocumentStore((s) => s.addPage);
   const removePage = useDocumentStore((s) => s.removePage);
@@ -320,10 +320,6 @@ export function Sidebar({ doc }: SidebarProps) {
 
   const dragIndexRef = useRef<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
-
-  useEffect(() => {
-    setTotalPages(doc?.numPages ?? pages.length);
-  }, [doc, pages.length, setTotalPages]);
 
   function startDrag(index: number) {
     return (e: ReactDragEvent<HTMLDivElement>) => {
@@ -380,6 +376,14 @@ export function Sidebar({ doc }: SidebarProps) {
   if (!doc && pages.length === 0) {
     return (
       <aside className="flex h-full w-[160px] flex-col items-center justify-center border-r bg-gray-50 p-2 text-xs text-gray-400">
+        <button
+          type="button"
+          onClick={() => setSidebarCollapsed(true)}
+          title="收起页面缩略图"
+          className="mb-2 rounded px-1.5 py-0.5 text-xs text-gray-500 hover:bg-gray-200"
+        >
+          ⟨
+        </button>
         缩略图
       </aside>
     );
@@ -387,6 +391,14 @@ export function Sidebar({ doc }: SidebarProps) {
 
   return (
     <aside className="flex h-full w-[160px] flex-col gap-1 overflow-y-auto border-r bg-gray-50 p-1">
+      <button
+        type="button"
+        onClick={() => setSidebarCollapsed(true)}
+        title="收起页面缩略图"
+        className="mx-auto rounded px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700"
+      >
+        ⟨ 收起
+      </button>
       {pages.map((page, index) => {
         const pageNumber = index + 1;
         const isActive = index === currentPageIndex;

@@ -12,6 +12,10 @@ export interface EditorState {
   selectedOverlayId: string | null;
   /** 打开 PDF 时是否自动"全文格式化"(全部文本按项目字体重排)。 */
   fullReformat: boolean;
+  /** 左侧页面缩略图侧栏是否收起(Canva 式,默认收起)。 */
+  sidebarCollapsed: boolean;
+  /** 右侧属性面板是否收起(选中元素时自动展开)。 */
+  inspectorCollapsed: boolean;
 
   setCurrentPage: (index: number) => void;
   setZoom: (zoom: number) => void;
@@ -19,6 +23,8 @@ export interface EditorState {
   setTotalPages: (n: number) => void;
   setSelectedOverlayId: (id: string | null) => void;
   setFullReformat: (v: boolean) => void;
+  setSidebarCollapsed: (v: boolean) => void;
+  setInspectorCollapsed: (v: boolean) => void;
   nextPage: () => void;
   prevPage: () => void;
   zoomIn: () => void;
@@ -26,12 +32,24 @@ export interface EditorState {
 }
 
 const FULL_REFORMAT_KEY = 'minipdf.fullReformat';
+const SIDEBAR_COLLAPSED_KEY = 'minipdf.sidebarCollapsed';
+const INSPECTOR_COLLAPSED_KEY = 'minipdf.inspectorCollapsed';
 
 function loadFullReformat(): boolean {
   try {
     return localStorage.getItem(FULL_REFORMAT_KEY) === '1';
   } catch {
     return false;
+  }
+}
+
+function loadFlag(key: string, fallback: boolean): boolean {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    return raw === '1';
+  } catch {
+    return fallback;
   }
 }
 
@@ -55,13 +73,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   totalPages: 0,
   selectedOverlayId: null,
   fullReformat: loadFullReformat(),
+  sidebarCollapsed: loadFlag(SIDEBAR_COLLAPSED_KEY, true),
+  inspectorCollapsed: loadFlag(INSPECTOR_COLLAPSED_KEY, false),
 
   setCurrentPage: (index) =>
     set(() => ({
       currentPageIndex: Math.max(0, Math.min(Math.max(0, get().totalPages - 1), index)),
-      // 切页时清除选中:上一页的选中 id 对新页面无效,
-      // 否则 Inspector 会显示错误的属性、块也会带着残留高亮。
-      selectedOverlayId: null,
     })),
 
   setZoom: (zoom) => set({ zoom: Math.max(0.1, Math.min(8, zoom)) }),
@@ -81,17 +98,32 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({ fullReformat: v });
   },
 
+  setSidebarCollapsed: (v) => {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? '1' : '0');
+    } catch {
+      /* 忽略存储失败(隐私模式等) */
+    }
+    set({ sidebarCollapsed: v });
+  },
+
+  setInspectorCollapsed: (v) => {
+    try {
+      localStorage.setItem(INSPECTOR_COLLAPSED_KEY, v ? '1' : '0');
+    } catch {
+      /* 忽略存储失败(隐私模式等) */
+    }
+    set({ inspectorCollapsed: v });
+  },
+
   nextPage: () => {
     const { currentPageIndex, totalPages } = get();
-    set({
-      currentPageIndex: Math.min(totalPages - 1, currentPageIndex + 1),
-      selectedOverlayId: null,
-    });
+    set({ currentPageIndex: Math.min(totalPages - 1, currentPageIndex + 1) });
   },
 
   prevPage: () => {
     const { currentPageIndex } = get();
-    set({ currentPageIndex: Math.max(0, currentPageIndex - 1), selectedOverlayId: null });
+    set({ currentPageIndex: Math.max(0, currentPageIndex - 1) });
   },
 
   zoomIn: () => {

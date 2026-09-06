@@ -3,6 +3,7 @@
 //
 // Height: h-9 (36px). Reads everything from stores -- no props needed.
 import { useState } from 'react';
+import clsx from 'clsx';
 import { useEditorStore, ZOOM_LEVELS } from '../store/editorStore';
 import { useDocumentStore } from '../store/documentStore';
 
@@ -12,6 +13,8 @@ export function BottomBar() {
   const setCurrentPage = useEditorStore((s) => s.setCurrentPage);
   const nextPage = useEditorStore((s) => s.nextPage);
   const prevPage = useEditorStore((s) => s.prevPage);
+  const sidebarCollapsed = useEditorStore((s) => s.sidebarCollapsed);
+  const setSidebarCollapsed = useEditorStore((s) => s.setSidebarCollapsed);
 
   const zoom = useEditorStore((s) => s.zoom);
   const setZoom = useEditorStore((s) => s.setZoom);
@@ -29,6 +32,21 @@ export function BottomBar() {
     <footer className="flex h-9 shrink-0 items-center justify-between border-t border-gray-200 bg-white px-3 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
       {/* Left: page navigation */}
       <div className="flex items-center gap-1">
+        {/* 页面缩略图开关(对齐 Canva Pages) */}
+        <button
+          type="button"
+          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          title={sidebarCollapsed ? '显示页面缩略图' : '隐藏页面缩略图'}
+          className={clsx(
+            'flex h-6 items-center gap-1 rounded border px-1.5 text-xs',
+            sidebarCollapsed
+              ? 'border-gray-200 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-700'
+              : 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+          )}
+        >
+          ⊞ 页面
+        </button>
+
         <button
           type="button"
           onClick={prevPage}

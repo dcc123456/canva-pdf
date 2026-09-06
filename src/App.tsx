@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { v4 as uuidv4 } from 'uuid';
 import { Viewer } from './features/viewer/Viewer';
@@ -28,6 +28,10 @@ function App() {
   const [signatureOpen, setSignatureOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const sidebarCollapsed = useEditorStore((s) => s.sidebarCollapsed);
+  const setSidebarCollapsed = useEditorStore((s) => s.setSidebarCollapsed);
+  const inspectorCollapsed = useEditorStore((s) => s.inspectorCollapsed);
+  const setInspectorCollapsed = useEditorStore((s) => s.setInspectorCollapsed);
 
   // Touch all stores so they are constructed on app load.
   useDocumentStore.getState();
@@ -51,6 +55,17 @@ function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // 选中元素时自动展开属性面板(Canva 行为:选中才出现属性 UI)。
+  // 放在 App(始终挂载):Inspector 折叠时被条件渲染卸载,自己无法响应。
+  const selectedOverlayId = useEditorStore((s) => s.selectedOverlayId);
+  const prevSelectedRef = useRef(selectedOverlayId);
+  useEffect(() => {
+    if (selectedOverlayId && selectedOverlayId !== prevSelectedRef.current) {
+      setInspectorCollapsed(false);
+    }
+    prevSelectedRef.current = selectedOverlayId;
+  }, [selectedOverlayId, setInspectorCollapsed]);
 
   // When template/project load sets doc=null, this effect notices
   // doc===null && store.pdfBytes!==null and auto-reloads the pdfjs document.
@@ -180,11 +195,33 @@ function App() {
           onOpenSignature={() => setSignatureOpen(true)}
         />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar doc={doc} />
+          {sidebarCollapsed ? (
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed(false)}
+              title="显示页面缩略图"
+              className="flex w-5 shrink-0 items-center justify-center border-r bg-gray-50 text-xs text-gray-500 hover:bg-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
+            >
+              ⟩
+            </button>
+          ) : (
+            <Sidebar doc={doc} />
+          )}
           <main className="flex-1 overflow-hidden">
             <PdfOrEmpty doc={doc} onOpenFile={handleOpenFile} />
           </main>
-          <Inspector />
+          {inspectorCollapsed ? (
+            <button
+              type="button"
+              onClick={() => setInspectorCollapsed(false)}
+              title="显示属性面板"
+              className="flex w-5 shrink-0 items-center justify-center border-l bg-gray-50 text-xs text-gray-500 hover:bg-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
+            >
+              ⟨
+            </button>
+          ) : (
+            <Inspector />
+          )}
         </div>
         <BottomBar />
         {/* Modals & overlays */}
