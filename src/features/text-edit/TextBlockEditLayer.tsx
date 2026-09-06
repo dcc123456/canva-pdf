@@ -131,12 +131,19 @@ export function TextBlockEditLayer({ page }: TextBlockEditLayerProps) {
             style={{
               left: b.bbox.x * zoom,
               top: b.bbox.y * zoom,
-              width: b.bbox.w * zoom,
-              // 编辑态:高度随内容向下生长(不低于原 bbox),避免长文本被
-              // 裁剪;同时抬高 zIndex,盖住下方内容(Canva 行为)。
+              // 编辑态:宽度用 max-content(按文本不换行的实际宽度伸展,
+              // 不低于原 bbox)—— PDF 原字与编辑字体有 1-2px 度量差,固定
+              // bbox 宽度会让"本来一行的标题"编辑时被挤断行。上限为页面
+              // 剩余宽度,超长文本仍正常换行。
               ...(isEditing
-                ? { minHeight: b.bbox.h * zoom, zIndex: 30 }
-                : { height: b.bbox.h * zoom }),
+                ? {
+                    width: 'max-content',
+                    minWidth: b.bbox.w * zoom,
+                    maxWidth: (page.width - b.bbox.x) * zoom,
+                    minHeight: b.bbox.h * zoom,
+                    zIndex: 30,
+                  }
+                : { width: b.bbox.w * zoom, height: b.bbox.h * zoom }),
               pointerEvents: 'auto',
               cursor: 'text',
               // 编辑态底色 = 渲染时采样到的该块局部页面背景(导出 whiteout
