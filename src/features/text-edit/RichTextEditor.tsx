@@ -466,10 +466,10 @@ export function RichTextEditor({
   ];
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-inherit">
+    <div className="flex min-h-full w-full flex-col bg-inherit">
       <EditorContent
         editor={editor}
-        className="tiptap-edit-area flex-1 overflow-auto"
+        className="tiptap-edit-area flex-1 overflow-visible"
         style={{ outline: 'none' }}
       />
       {toolbarRect && (

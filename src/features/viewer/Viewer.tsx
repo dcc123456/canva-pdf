@@ -153,9 +153,10 @@ export function Viewer({ doc }: ViewerProps) {
 
   return (
     <div className="flex h-full w-full flex-col">
-      {/* 连续滚动画布:全部页垂直排列 */}
+      {/* 连续滚动画布:全部页垂直排列。顶部留白 ≥ 页眉徽标高度,
+          避免第一页的"第 N 页"徽标被上方工具栏遮挡。 */}
       <div ref={scrollRef} className="flex-1 overflow-auto bg-gray-100 dark:bg-gray-900">
-        <div className="relative mx-auto flex w-fit flex-col items-center gap-6 p-4">
+        <div className="relative mx-auto flex w-fit flex-col items-center gap-8 px-4 pb-8 pt-12">
           {pages.map((page, index) => (
             <PageView
               key={page.id}

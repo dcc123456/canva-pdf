@@ -31,6 +31,10 @@ type BuiltinFont = (typeof BUILTIN_FONTS)[number];
 const isBuiltinFont = (s: string): s is BuiltinFont =>
   (BUILTIN_FONTS as readonly string[]).includes(s);
 
+// 统一输入框样式:明确边框/底色,避免"透明穿透"的观感(看不出是可编辑框)。
+const inputCls =
+  'rounded border border-gray-300 bg-white px-1 py-0.5 text-gray-800 shadow-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100';
+
 // ---------- Shared sub-components --------------------------------------------
 
 interface CommonBoxFields {
@@ -129,7 +133,7 @@ function NumberInput({
         const v = Number(e.target.value);
         if (Number.isFinite(v)) onChange(v);
       }}
-      className="w-20 rounded border px-1 py-0.5 text-right"
+      className={clsx(inputCls, 'w-20 text-right')}
     />
   );
 }
@@ -233,7 +237,7 @@ function FontSelector({
           onChange(v);
         }
       }}
-      className="rounded border px-1 py-0.5"
+      className={inputCls}
     >
       {BUILTIN_FONTS.map((f) => (
         <option key={f} value={f}>
@@ -446,7 +450,7 @@ function TextControls({
                 updateOverlay(item.id, { fontSize: Math.max(6, Math.min(144, v)) } as Partial<OverlayItem>);
               }
             }}
-            className="rounded border px-1 py-0.5"
+            className={inputCls}
           />
         </label>
         <label className="flex items-center justify-between gap-2 text-xs text-gray-600">
@@ -476,7 +480,7 @@ function TextControls({
                 } as Partial<OverlayItem>);
               }
             }}
-            className="rounded border px-1 py-0.5"
+            className={inputCls}
           />
         </label>
         {/* Phase 4: alignment buttons */}
@@ -509,7 +513,7 @@ function NoteControls({
           value={item.text}
           onChange={(e) => updateOverlay(item.id, { text: e.target.value } as Partial<OverlayItem>)}
           rows={3}
-          className="rounded border px-1 py-0.5"
+          className={inputCls}
         />
       </label>
       <label className="mt-2 flex items-center justify-between text-xs text-gray-600">
@@ -642,7 +646,7 @@ function TextBlockControls({
                 } as Partial<OverlayItem>);
               }
             }}
-            className="rounded border px-1 py-0.5"
+            className={inputCls}
           />
         </label>
 
@@ -674,7 +678,7 @@ function TextBlockControls({
                 } as Partial<OverlayItem>);
               }
             }}
-            className="rounded border px-1 py-0.5"
+            className={inputCls}
           />
         </label>
 

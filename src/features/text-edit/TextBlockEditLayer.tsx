@@ -31,7 +31,6 @@ export function TextBlockEditLayer({ page }: TextBlockEditLayerProps) {
   const selectedOverlayId = useEditorStore((s) => s.selectedOverlayId);
   const setSelectedOverlayId = useEditorStore((s) => s.setSelectedOverlayId);
   const overlays = useDocumentStore((s) => s.overlays);
-  const removeOverlay = useDocumentStore((s) => s.removeOverlay);
   // 采样到的块局部页面背景色:编辑态用它替代白色,彩色页面底色不跳变。
   const pageBgColors = useDocumentStore((s) => s.pageBgColors);
 
@@ -133,7 +132,11 @@ export function TextBlockEditLayer({ page }: TextBlockEditLayerProps) {
               left: b.bbox.x * zoom,
               top: b.bbox.y * zoom,
               width: b.bbox.w * zoom,
-              height: b.bbox.h * zoom,
+              // 编辑态:高度随内容向下生长(不低于原 bbox),避免长文本被
+              // 裁剪;同时抬高 zIndex,盖住下方内容(Canva 行为)。
+              ...(isEditing
+                ? { minHeight: b.bbox.h * zoom, zIndex: 30 }
+                : { height: b.bbox.h * zoom }),
               pointerEvents: 'auto',
               cursor: 'text',
               // 编辑态底色 = 渲染时采样到的该块局部页面背景(导出 whiteout
@@ -179,20 +182,6 @@ export function TextBlockEditLayer({ page }: TextBlockEditLayerProps) {
                 registerCommit={registerCommit}
               />
             ) : null}
-            {!isEditing && (
-              <button
-                type="button"
-                title="删除此文本块"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeOverlay(b.id);
-                  if (selectedOverlayId === b.id) setSelectedOverlayId(null);
-                }}
-                className="absolute -right-3 -top-3 hidden h-5 w-5 items-center justify-center rounded-full border border-red-400 bg-white text-[10px] text-red-600 group-hover:flex"
-              >
-                x
-              </button>
-            )}
           </div>
         );
       })}
