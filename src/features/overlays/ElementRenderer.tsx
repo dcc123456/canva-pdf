@@ -196,6 +196,9 @@ export function ElementRenderer({ overlay, selected = false }: ElementRendererPr
       const showOverlay = edited || selected;
       const lh = overlay.lineHeight || 1.2;
       const align = overlay.align || 'left';
+      // 白底颜色:未移动的块用采样底色(保住彩色底板);移动过的块原位置
+      // 应恢复页面底色(白),底色跟随块走到新位置。
+      const whiteoutFill = moved ? '#ffffff' : pageBgColor;
       return (
         <>
           {/* 白底画在 originalBbox:盖住 pdfjs canvas 上原位置的原字。
@@ -207,7 +210,7 @@ export function ElementRenderer({ overlay, selected = false }: ElementRendererPr
               y={overlay.originalBbox.y - overlay.originalBbox.h * 0.15}
               width={overlay.originalBbox.w + 2}
               height={overlay.originalBbox.h * 1.3}
-              fill={pageBgColor}
+              fill={whiteoutFill}
               pointerEvents="none"
             />
           )}

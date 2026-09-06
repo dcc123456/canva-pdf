@@ -200,15 +200,39 @@ export async function applyTextBlockRedraws(
     const page: PDFPage = doc.getPage(editorPageIndex);
     const pageHeight = page.getHeight();
     const { r, g, b } = hexToRgb(block.color || '#000000');
-    // 白底颜色:优先用画布采样到的块局部背景色(彩色底板上的文字,
+    // 块底色:优先用画布采样到的块局部背景色(彩色底板上的文字,
     // 纯白白底会破坏底色),采样缺失时退回纯白。
     const bgHex = options.pageBgColors?.[block.id] || '#ffffff';
     const bg = hexToRgb(bgHex);
-    const white = rgb(bg.r, bg.g, bg.b);
+    // 移动过的块:原位置恢复页面底色(白),底色跟随块走到新位置。
+    const moved =
+      block.bbox.x !== block.originalBbox.x ||
+      block.bbox.y !== block.originalBbox.y ||
+      block.bbox.w !== block.originalBbox.w ||
+      block.bbox.h !== block.originalBbox.h;
+    const whiteoutColor = moved ? rgb(1, 1, 1) : rgb(bg.r, bg.g, bg.b);
     const fontSize = Math.max(block.fontSize, 6);
     const lineHeight = block.lineHeight || 1.2;
     const align = block.align || 'left';
     const lineStep = fontSize * lineHeight;
+
+    // 移动过的块:原位置画白矩形,盖住底板图形(若 redact 路径底板是
+    // 矢量图形不会被删除,不盖的话原位置留一块与块同色的空占位)。
+    if (moved && redacted) {
+      page.drawRectangle({
+        x: block.originalBbox.x - 1,
+        y:
+          pageHeight -
+          block.originalBbox.y -
+          block.originalBbox.h -
+          block.originalBbox.h * 0.15,
+        width: block.originalBbox.w + 2,
+        height: block.originalBbox.h * 1.3,
+        color: rgb(1, 1, 1),
+        borderWidth: 0,
+        opacity: 1,
+      });
+    }
 
     // 白底覆盖:仅在未 redact 时执行(redact 路径已字节级删字,无需覆盖)。
     if (!redacted) {
@@ -219,7 +243,7 @@ export async function applyTextBlockRedraws(
         block.originalBbox
       );
 
-      // (2) 按字符 quad 画白底。
+      // (2) 按字符 quad 画白底(移动过的块用白色恢复页面底色)。
       for (const q of quads) {
         const padY = Math.max(1, q.h * 0.1);
         const padX = 0.5;
@@ -229,11 +253,24 @@ export async function applyTextBlockRedraws(
           y: yPdf,
           width: q.w + 2 * padX,
           height: q.h + 2 * padY,
-          color: white,
+          color: whiteoutColor,
           borderWidth: 0,
           opacity: 1,
         });
       }
+    }
+
+    // 移动过的块:新位置画块底色矩形(与画布预览一致,底色跟随块)。
+    if (moved) {
+      page.drawRectangle({
+        x: block.bbox.x - 1,
+        y: pageHeight - block.bbox.y - block.bbox.h - 1,
+        width: block.bbox.w + 2,
+        height: block.bbox.h + 2,
+        color: rgb(bg.r, bg.g, bg.b),
+        borderWidth: 0,
+        opacity: 1,
+      });
     }
 
     // (3) 画新字。
