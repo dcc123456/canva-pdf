@@ -148,6 +148,7 @@ export async function exportPdf(
       redacted,
       pageBgColors: useDocumentStore.getState().pageBgColors,
       panelRects: useDocumentStore.getState().panelRects,
+      segTextColorsFor: (block) => block.segTextColors,
     });
   }
 

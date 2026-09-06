@@ -57,6 +57,8 @@ export interface BlockDefaults {
   fontSize?: number;
   fontFamily?: string;
   fontClass?: FontClass;
+  /** 检测后按 segment bbox 反推的文字色(检测颜色缺失时的补充元数据)。 */
+  segTextColors?: string[];
 }
 
 export function segmentsToTipTapContent(
@@ -68,14 +70,18 @@ export function segmentsToTipTapContent(
   const hasSegments = segments && segments.length > 0;
 
   const buildMarks = (
-    seg: RichTextSegment
+    seg: RichTextSegment,
+    segIndex: number
   ): { type: string; attrs?: Record<string, unknown> }[] => {
     const marks: { type: string; attrs?: Record<string, unknown> }[] = [];
     const isBold = hasSegments ? !!seg.bold : (seg.bold ?? blockDefaults?.bold);
     const isItalic = hasSegments ? !!seg.italic : (seg.italic ?? blockDefaults?.italic);
     const isUnderline = hasSegments ? !!seg.underline : (seg.underline ?? false);
     const isStrike = hasSegments ? !!seg.strike : (seg.strike ?? false);
-    const color = seg.color ?? blockDefaults?.color;
+    const color =
+      seg.color ??
+      blockDefaults?.segTextColors?.[segIndex] ??
+      blockDefaults?.color;
     const fontSize = seg.fontSize ?? blockDefaults?.fontSize;
     const fontClass = seg.fontClass ?? blockDefaults?.fontClass;
     // Resolve fontClass -> CSS font-family. Fall back to seg.fontFamily
@@ -116,10 +122,15 @@ export function segmentsToTipTapContent(
   const pushText = (
     content: JSONContent[],
     textPart: string,
-    seg: RichTextSegment
+    seg: RichTextSegment,
+    segIndex: number
   ) => {
     if (!textPart) return;
-    content.push({ type: 'text', text: textPart, marks: buildMarks(seg) });
+    content.push({
+      type: 'text',
+      text: textPart,
+      marks: buildMarks(seg, segIndex),
+    });
   };
 
   const content: JSONContent[] = [];
@@ -135,13 +146,13 @@ export function segmentsToTipTapContent(
         fontClass: blockDefaults?.fontClass,
       }];
 
-  for (const seg of segs) {
+  segs.forEach((seg, segIndex) => {
     const parts = seg.text.split('\n');
     for (let i = 0; i < parts.length; i++) {
       if (i > 0) content.push({ type: 'hardBreak' });
-      pushText(content, parts[i], seg);
+      pushText(content, parts[i], seg, segIndex);
     }
-  }
+  });
 
   return { type: 'doc', content: [{ type: 'paragraph', content }] };
 }
@@ -313,6 +324,7 @@ export function RichTextEditor({
       fontSize: block.fontSize,
       fontFamily: block.font,
       fontClass: block.fontClass,
+      segTextColors: block.segTextColors,
     }, zoom),
     autofocus: true,
     onUpdate: ({ editor: ed }) => {

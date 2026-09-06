@@ -401,6 +401,8 @@ async function detectTextBlocksImpl(
           if (li > 0) rawSegs.push({ text: '\n' });
           for (const atom of line.atoms) {
             const seg: RichTextSegment = { text: atom.text };
+            // 检测元数据:atom 位置,供渲染后按区域反推文字颜色。
+            seg.bbox = atom.bbox;
             if (atom.bold) seg.bold = true;
             if (atom.italic) seg.italic = true;
             if (atom.font) seg.fontFamily = atom.font;
@@ -417,11 +419,16 @@ async function detectTextBlocksImpl(
           }
         });
         // Merge adjacent segments with identical style to reduce fragmentation.
+        // 颜色检测失败的文档(atom 无色)不合并相邻同 style 段 —— 灰/蓝
+        // 等真实颜色差异在 styleKey 中不可见,合并会让渲染后按 segment
+        // 区域反推的颜色无法区分(一行内灰色正文 + 蓝色链接会被并成一段)。
         const segs: RichTextSegment[] = [];
         for (const seg of rawSegs) {
           const last = segs[segs.length - 1];
+          const colorless = !last?.color && !seg.color;
           if (
             last &&
+            !colorless &&
             !!last.bold === !!seg.bold &&
             !!last.italic === !!seg.italic &&
             (last.fontFamily || '') === (seg.fontFamily || '') &&
@@ -430,6 +437,22 @@ async function detectTextBlocksImpl(
             (last.color ?? '') === (seg.color ?? '')
           ) {
             last.text += seg.text;
+            if (seg.bbox && last.bbox) {
+              last.bbox = {
+                x: Math.min(last.bbox.x, seg.bbox.x),
+                y: Math.min(last.bbox.y, seg.bbox.y),
+                w:
+                  Math.max(
+                    last.bbox.x + last.bbox.w,
+                    seg.bbox.x + seg.bbox.w
+                  ) - Math.min(last.bbox.x, seg.bbox.x),
+                h:
+                  Math.max(
+                    last.bbox.y + last.bbox.h,
+                    seg.bbox.y + seg.bbox.h
+                  ) - Math.min(last.bbox.y, seg.bbox.y),
+              };
+            }
           } else {
             segs.push({ ...seg });
           }

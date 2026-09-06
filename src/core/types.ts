@@ -26,6 +26,11 @@ export interface RichTextSegment {
   fontFamily?: string;
   /** Resolved font class. When absent, the parent block's fontClass is used. */
   fontClass?: FontClass;
+  /**
+   * 检测时该 segment 对应 atom 的位置(PDF y-down 坐标,仅检测产物持有)。
+   * 用于渲染后按区域反推文字颜色等元数据;编辑提交后的新 segments 不携带。
+   */
+  bbox?: Rect;
 }
 
 export type TextAlign = 'left' | 'center' | 'right';
@@ -132,6 +137,12 @@ export interface TextBlockItem extends OverlayBase {
   segments?: RichTextSegment[];
   /** Segments snapshot at detection time. Used to detect user edits to styling. */
   originalSegments?: RichTextSegment[];
+  /**
+   * 逐 segment 的像素反推文字色(检测颜色缺失时,从渲染像素按 segment
+   * bbox 区域反推)。与 segments 按下标对应;编辑提交后颜色会写入
+   * segments 本身,此字段仅作为检测补充元数据。
+   */
+  segTextColors?: string[];
   /** Canonical font class (see ADR 0001). Defaults to 'sans'. */
   fontClass?: FontClass;
 }

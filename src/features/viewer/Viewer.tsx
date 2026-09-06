@@ -355,64 +355,90 @@ function PageView({
           }
         }
         store.setPageBgColor(o.id, best);
-        // 文字色反推:颜色抽取在 Form XObject 等场景会失败,fallback 成
-        // 默认黑。若块底色非白(彩色底板)而文字色是默认黑,从渲染像素
-        // 反推真实文字色 —— 取帧内与底色差异明显的像素的众数量化色。
-        // (黑字白底的常态不触发。)
-        if (o.color === '#000000' && best.toLowerCase() !== '#ffffff') {
-          const refC = {
+        // 文字色反推:颜色抽取在 Form XObject 等场景会失败,所有 segment
+        // 颜色缺失(块色为默认黑)。逐 segment 在其 bbox 区域内取非底色
+        // 像素的众数量化色,写回 segTextColors —— 一行内灰色正文 + 蓝色
+        // 链接等混合颜色得以保留。
+        if (o.color === '#000000' && (o.segments || []).length > 0) {
+          const segColors: string[] = [];
+          let inferredAny = false;
+          // 底色排除容差:白底只需排除接近白(页面底+浅抗锯齿),彩底
+          // 排除稍宽以容纳抗锯齿过渡。
+          const bgTol = best.toLowerCase() === '#ffffff' ? 20 : 28;
+          const bgRef = {
             r: parseInt(best.slice(1, 3), 16),
             g: parseInt(best.slice(3, 5), 16),
             b: parseInt(best.slice(5, 7), 16),
           };
-          const buckets = new Map<string, { n: number; r: number; g: number; b: number }>();
-          // 只统计块 bbox 内缩 2px 的中心区域(帧边缘可能含底板外像素),
-          // 排除底色像素后取众数 —— 白色文字不会被误排除。
-          const inX0 = Math.max(0, Math.round((b.x + 2) * k) - fx0);
-          const inY0 = Math.max(0, Math.round((b.y + 2) * k) - fy0);
-          const inX1 = Math.min(wpx, Math.round((b.x + b.w - 2) * k) - fx0);
-          const inY1 = Math.min(hpx, Math.round((b.y + b.h - 2) * k) - fy0);
-          for (let yy = inY0; yy < inY1; yy++) {
-            for (let xx = inX0; xx < inX1; xx++) {
-              const i = (yy * wpx + xx) * 4;
-              const r = img.data[i];
-              const g = img.data[i + 1];
-              const b2 = img.data[i + 2];
-              // 排除底色附近的像素(含抗锯齿过渡)
-              if (
-                Math.abs(r - refC.r) <= 28 &&
-                Math.abs(g - refC.g) <= 28 &&
-                Math.abs(b2 - refC.b) <= 28
-              ) {
-                continue;
+          for (const seg of o.segments || []) {
+            if (!seg.bbox || !seg.text.trim()) {
+              segColors.push(seg.color || '#000000');
+              continue;
+            }
+            const sb = seg.bbox;
+            const sx0 = Math.max(0, Math.round((sb.x + 1) * k) - fx0);
+            const sy0 = Math.max(0, Math.round((sb.y + 1) * k) - fy0);
+            const sx1 = Math.min(wpx, Math.round((sb.x + sb.w - 1) * k) - fx0);
+            const sy1 = Math.min(hpx, Math.round((sb.y + sb.h - 1) * k) - fy0);
+            if (sx1 - sx0 <= 0 || sy1 - sy0 <= 0) {
+              segColors.push(seg.color || '#000000');
+              continue;
+            }
+            const buckets = new Map<
+              string,
+              { n: number; r: number; g: number; b: number }
+            >();
+            for (let yy = sy0; yy < sy1; yy++) {
+              for (let xx = sx0; xx < sx1; xx++) {
+                const i = (yy * wpx + xx) * 4;
+                const r = img.data[i];
+                const g = img.data[i + 1];
+                const b2 = img.data[i + 2];
+                // 排除底色附近的像素(含抗锯齿过渡)。bg 为白时排除
+                // 整个近白区间(页面底 + 浅色抗锯齿)。
+                if (
+                  Math.abs(r - bgRef.r) <= bgTol &&
+                  Math.abs(g - bgRef.g) <= bgTol &&
+                  Math.abs(b2 - bgRef.b) <= bgTol
+                ) {
+                  continue;
+                }
+                const key = (r >> 4) + ',' + (g >> 4) + ',' + (b2 >> 4);
+                const bucket =
+                  buckets.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+                bucket.n++;
+                bucket.r += r;
+                bucket.g += g;
+                bucket.b += b2;
+                buckets.set(key, bucket);
               }
-              const key = (r >> 4) + ',' + (g >> 4) + ',' + (b2 >> 4);
-              const bucket = buckets.get(key) || { n: 0, r: 0, g: 0, b: 0 };
-              bucket.n++;
-              bucket.r += r;
-              bucket.g += g;
-              bucket.b += b2;
-              buckets.set(key, bucket);
+            }
+            let bestB = null;
+            for (const bucket of buckets.values()) {
+              if (!bestB || bucket.n > bestB.n) bestB = bucket;
+            }
+            if (bestB && bestB.n > 8) {
+              const hex =
+                '#' +
+                [bestB.r / bestB.n, bestB.g / bestB.n, bestB.b / bestB.n]
+                  .map((v) =>
+                    Math.max(0, Math.min(255, Math.round(v)))
+                      .toString(16)
+                      .padStart(2, '0')
+                  )
+                  .join('');
+              segColors.push(hex);
+              if (hex.toLowerCase() !== '#000000') inferredAny = true;
+            } else {
+              segColors.push(seg.color || '#000000');
             }
           }
-          // 众数量化桶的平均色,且像素数需达到文字笔画的量级
-          let bestB = null;
-          for (const bucket of buckets.values()) {
-            if (!bestB || bucket.n > bestB.n) bestB = bucket;
-          }
-          if (bestB && bestB.n > 30) {
-            const hex =
-              '#' +
-              [bestB.r / bestB.n, bestB.g / bestB.n, bestB.b / bestB.n]
-                .map((v) =>
-                  Math.max(0, Math.min(255, Math.round(v)))
-                    .toString(16)
-                    .padStart(2, '0')
-                )
-                .join('');
-            if (hex.toLowerCase() !== o.color.toLowerCase()) {
-              useDocumentStore.getState().updateOverlay(o.id, { color: hex });
-            }
+          // 全部都是黑色(未推断出有效色)时不写回。
+          if (inferredAny || segColors.some((c) => c.toLowerCase() !== '#000000')) {
+            useDocumentStore.getState().updateOverlayMeta(o.id, {
+              color: segColors.find((c) => c.toLowerCase() !== '#000000') || '#000000',
+              segTextColors: segColors,
+            });
           }
         }
         // 测量底板矩形:白底(页面底色)无需测量。

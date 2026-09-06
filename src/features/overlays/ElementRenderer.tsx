@@ -12,7 +12,8 @@ function renderSegments(
   segments: RichTextSegment[] | undefined,
   text: string,
   color: string,
-  fontFamily: string
+  fontFamily: string,
+  segTextColors?: string[]
 ) {
   if (!segments || segments.length === 0) {
     return text;
@@ -28,7 +29,7 @@ function renderSegments(
           fontWeight: s.bold ? 700 : 400,
           fontStyle: s.italic ? 'italic' : 'normal',
           textDecoration: decos.length > 0 ? decos.join(' ') : 'none',
-          color: s.color || color,
+          color: s.color || segTextColors?.[i] || color,
           fontSize: s.fontSize ? `${s.fontSize}px` : undefined,
           fontFamily: s.fontFamily || fontFamily,
         }}
@@ -290,7 +291,7 @@ export function ElementRenderer({ overlay, selected = false }: ElementRendererPr
                   padding: 0,
                 }}
               >
-                {renderSegments(overlay.segments, overlay.text, overlay.color, overlay.font)}
+                {renderSegments(overlay.segments, overlay.text, overlay.color, overlay.font, overlay.segTextColors)}
               </div>
             </foreignObject>
           )}

@@ -22,6 +22,8 @@ export interface DocumentState {
    */
   panelRects: Record<string, Rect>;
   setPanelRect: (overlayId: string, rect: Rect | null) => void;
+  /** 元数据更新(不走 history):如渲染后反推的文字颜色。 */
+  updateOverlayMeta: (id: string, patch: Partial<OverlayItem>) => void;
 
   setPages: (pages: PageMeta[]) => void;
   addPage: (page?: Partial<PageMeta>) => void;
@@ -105,6 +107,16 @@ export const useDocumentStore = create<DocumentState>((set) => ({
         delete next[overlayId];
       }
       return { panelRects: next };
+    }),
+
+  updateOverlayMeta: (id, patch) =>
+    // No history: 渲染后反推的颜色是元数据,不是用户操作。
+    set((state) => {
+      const idx = state.overlays.findIndex((o) => o.id === id);
+      if (idx === -1) return state;
+      const overlays = state.overlays.slice();
+      overlays[idx] = { ...overlays[idx], ...patch } as OverlayItem;
+      return { overlays };
     }),
 
   addPage: (page) =>

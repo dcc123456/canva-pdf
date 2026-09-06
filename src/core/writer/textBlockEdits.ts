@@ -101,6 +101,11 @@ export interface ApplyTextBlockRedrawsOptions {
   pageBgColors?: Record<string, string>;
   /** 块底板矩形(渲染像素实测):移动块时原位置白底需覆盖整个底板。 */
   panelRects?: Record<string, Rect>;
+  /**
+   * 取某块的反推文字色数组(逐 segment,与 block.segments 下标对应)。
+   * 用函数是因为多个块共享同一份 panelRects/textColors 存储键空间。
+   */
+  segTextColorsFor?: (block: TextBlockItem) => string[] | undefined;
 }
 
 /**
@@ -304,11 +309,16 @@ export async function applyTextBlockRedraws(
         isCjk: boolean;
       };
       const lines: SegInfo[][] = [[]];
+      const segTextColors = options.segTextColorsFor?.(block) || [];
 
-      for (const seg of block.segments) {
+      for (let segIndex = 0; segIndex < block.segments.length; segIndex++) {
+        const seg = block.segments[segIndex];
         const segBold = !!seg.bold;
         const segItalic = !!seg.italic;
-        const segColor = seg.color || block.color;
+        const segColor =
+          seg.color ||
+          segTextColors[segIndex] ||
+          block.color;
         const segSize = seg.fontSize || block.fontSize;
         const segFontClass: FontClass = seg.fontClass || block.fontClass || 'sans';
         const parts = seg.text.split('\n');
