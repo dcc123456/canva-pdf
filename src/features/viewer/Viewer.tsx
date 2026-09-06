@@ -217,6 +217,7 @@ function PageView({
   // 渲染串行锁:防止同一 canvas 并发 render() 报错。
   const renderLockRef = useRef<Promise<void>>(Promise.resolve());
   const [visible, setVisible] = useState(false);
+  const [renderTick, setRenderTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -240,7 +241,7 @@ function PageView({
     return () => observer.disconnect();
   }, []);
 
-  // 渲染当前页 + 采样该页 text-block 的局部背景色。
+  // 渲染当前页(渲染完成后递增 renderTick,供背景色采样感知)。
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
@@ -265,34 +266,6 @@ function PageView({
           scale: zoom,
           rotation: page.rotation,
         });
-        if (cancelled) return;
-        // 采样块背景色:取块左上外侧 2px 的像素(与导出 whiteout 同色)。
-        const ctx = canvasRef.current.getContext('2d');
-        if (ctx) {
-          const dpr = window.devicePixelRatio || 1;
-          const store = useDocumentStore.getState();
-          const blockOverlays = store.overlays.filter(
-            (o) => o.type === 'text-block' && o.pageId === page.id
-          );
-          for (const o of blockOverlays) {
-            if (o.type !== 'text-block') continue;
-            const cssX = (o.originalBbox.x - 2) * zoom;
-            const cssY = (o.originalBbox.y - 2) * zoom;
-            const deviceX = Math.max(0, Math.round(cssX * dpr));
-            const deviceY = Math.max(0, Math.round(cssY * dpr));
-            try {
-              const px = ctx.getImageData(deviceX, deviceY, 1, 1).data;
-              const hex =
-                '#' +
-                [px[0], px[1], px[2]]
-                  .map((v) => v.toString(16).padStart(2, '0'))
-                  .join('');
-              store.setPageBgColor(o.id, hex);
-            } catch {
-              /* tainted canvas or out of bounds; skip */
-            }
-          }
-        }
       } catch (err) {
         if (err instanceof Error && /cancelled/i.test(err.message)) return;
         setError(err instanceof Error ? err.message : String(err));
@@ -300,6 +273,7 @@ function PageView({
         pdfPage.cleanup();
         release?.();
       }
+      if (!cancelled) setRenderTick((t) => t + 1);
     }
     draw();
     return () => {
@@ -307,6 +281,80 @@ function PageView({
       release?.();
     };
   }, [doc, visible, zoom, page.rotation, page.id, pageNumber]);
+
+  // 块背景色采样:渲染完成 + 块集合变化时都要重采(渲染完成时检测可能
+  // 尚未跑完,只采一次会永远采到空白)。颜色取块四边外扩 3px 的 8 点 +
+  // 四角内缩 2px 的 4 点共 12 个采样点的众数 —— 文字可能压在彩色底板上,
+  // 单点采样(左上外 2px)会采到板外颜色,编辑后白底就"变白"。
+  const overlays = useDocumentStore((s) => s.overlays);
+  const pageBlockIdsKey = overlays
+    .filter((o) => o.type === 'text-block' && o.pageId === page.id)
+    .map((o) => o.id)
+    .join(',');
+  useEffect(() => {
+    if (!visible || !renderTick || !canvasRef.current) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const store = useDocumentStore.getState();
+    const dpr = window.devicePixelRatio || 1;
+    const k = zoom * dpr;
+    for (const o of store.overlays) {
+      if (o.type !== 'text-block' || o.pageId !== page.id) continue;
+      const b = o.originalBbox;
+      const fx0 = Math.max(0, Math.floor((b.x - 5) * k));
+      const fy0 = Math.max(0, Math.floor((b.y - 5) * k));
+      const fx1 = Math.min(canvas.width, Math.ceil((b.x + b.w + 5) * k));
+      const fy1 = Math.min(canvas.height, Math.ceil((b.y + b.h + 5) * k));
+      const wpx = fx1 - fx0;
+      const hpx = fy1 - fy0;
+      if (wpx <= 0 || hpx <= 0) continue;
+      try {
+        const img = ctx.getImageData(fx0, fy0, wpx, hpx);
+        const px = (cssX: number, cssY: number) => {
+          const dx = Math.min(wpx - 1, Math.max(0, Math.round(cssX * k) - fx0));
+          const dy = Math.min(hpx - 1, Math.max(0, Math.round(cssY * k) - fy0));
+          const i = (dy * wpx + dx) * 4;
+          return (
+            '#' +
+            [img.data[i], img.data[i + 1], img.data[i + 2]]
+              .map((v) => v.toString(16).padStart(2, '0'))
+              .join('')
+          );
+        };
+        const pts: Array<[number, number]> = [
+          [b.x - 3, b.y - 3],
+          [b.x + b.w / 2, b.y - 3],
+          [b.x + b.w + 3, b.y - 3],
+          [b.x - 3, b.y + b.h / 2],
+          [b.x + b.w + 3, b.y + b.h / 2],
+          [b.x - 3, b.y + b.h + 3],
+          [b.x + b.w / 2, b.y + b.h + 3],
+          [b.x + b.w + 3, b.y + b.h + 3],
+          [b.x + 2, b.y + 2],
+          [b.x + b.w - 2, b.y + 2],
+          [b.x + 2, b.y + b.h - 2],
+          [b.x + b.w - 2, b.y + b.h - 2],
+        ];
+        const counts = new Map<string, number>();
+        for (const [cx, cy] of pts) {
+          const hex = px(cx, cy);
+          counts.set(hex, (counts.get(hex) || 0) + 1);
+        }
+        let best = '#ffffff';
+        let bestN = -1;
+        for (const [hex, n] of counts) {
+          if (n > bestN) {
+            bestN = n;
+            best = hex;
+          }
+        }
+        store.setPageBgColor(o.id, best);
+      } catch {
+        /* tainted canvas or out of bounds; skip */
+      }
+    }
+  }, [visible, renderTick, pageBlockIdsKey, page.id, zoom]);
 
   const { width: renderW, height: renderH } = rotatedSize(page);
   const isPdfPage = !!doc && pageNumber <= doc.numPages;

@@ -97,6 +97,8 @@ export interface ApplyTextBlockRedrawsOptions {
   textBlocks: TextBlockItem[];
   /** true = MuPDF 已 redact(跳过白底);false = 走白底兜底。 */
   redacted: boolean;
+  /** 块局部背景色(画布采样):白底兜底时使用,彩色底板不变白。 */
+  pageBgColors?: Record<string, string>;
 }
 
 /**
@@ -198,7 +200,11 @@ export async function applyTextBlockRedraws(
     const page: PDFPage = doc.getPage(editorPageIndex);
     const pageHeight = page.getHeight();
     const { r, g, b } = hexToRgb(block.color || '#000000');
-    const white = rgb(1, 1, 1);
+    // 白底颜色:优先用画布采样到的块局部背景色(彩色底板上的文字,
+    // 纯白白底会破坏底色),采样缺失时退回纯白。
+    const bgHex = options.pageBgColors?.[block.id] || '#ffffff';
+    const bg = hexToRgb(bgHex);
+    const white = rgb(bg.r, bg.g, bg.b);
     const fontSize = Math.max(block.fontSize, 6);
     const lineHeight = block.lineHeight || 1.2;
     const align = block.align || 'left';
