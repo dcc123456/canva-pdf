@@ -68,3 +68,16 @@ html.dark body {
   white-space: pre-wrap;
   tab-size: 4;
 }
+
+/* Canva 风格文本块轮廓:未选中完全透明(不显示虚线框),hover 淡入
+   半透明主题色,选中/编辑为实线主题色。颜色跟随 --accent 主题变量。 */
+.text-block-outline {
+  border: 2px solid transparent;
+  transition: border-color 0.12s ease;
+}
+.text-block-outline:hover {
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 45%, transparent);
+}
+.text-block-outline.is-selected {
+  border-color: var(--accent, #2563eb);
+}

@@ -243,19 +243,22 @@ export function ElementRenderer({ overlay, selected = false }: ElementRendererPr
               pointerEvents="none"
             />
           )}
-          {/* 选中框画在 bbox(当前位置) */}
-          <rect
-            x={overlay.bbox.x}
-            y={overlay.bbox.y}
-            width={overlay.bbox.w}
-            height={overlay.bbox.h}
-            fill="transparent"
-            stroke="#60a5fa"
-            strokeOpacity={selected ? 0.9 : 0.5}
-            strokeWidth={selected ? 0.75 : 0.5}
-            strokeDasharray="3 2"
-            pointerEvents="none"
-          />
+          {/* 选中提示虚线画在 bbox(当前位置)。选中时不画 —— 选中样式
+              统一由 SelectionFrame 的主题色实线框负责,否则两框叠影。 */}
+          {!selected && (
+            <rect
+              x={overlay.bbox.x}
+              y={overlay.bbox.y}
+              width={overlay.bbox.w}
+              height={overlay.bbox.h}
+              fill="transparent"
+              stroke="#60a5fa"
+              strokeOpacity={0.5}
+              strokeWidth={0.5}
+              strokeDasharray="3 2"
+              pointerEvents="none"
+            />
+          )}
           {/* 新字画在 bbox(当前位置) -- Phase 2+3+4+6: foreignObject
               for wrapping, alignment, multi-line and segments。
               编辑字体与原字有 1-2px 度量差,固定 bbox 宽高会挤断行/裁剪;

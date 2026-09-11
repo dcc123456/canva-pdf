@@ -122,11 +122,11 @@ export function TextBlockEditLayer({ page }: TextBlockEditLayerProps) {
         return (
           <div
             key={b.id}
+            // Canva 风格轮廓:未选中时隐藏,hover 淡入;选中/编辑为
+            // 实线主题色。具体样式见 index.css 的 .text-block-outline。
             className={
-              'absolute rounded-sm ' +
-              (isSelected || isEditing
-                ? 'border-2 border-blue-600 border-dashed'
-                : 'border border-blue-400 border-dashed opacity-60 hover:opacity-100')
+              'absolute text-block-outline' +
+              (isSelected || isEditing ? ' is-selected' : '')
             }
             style={{
               left: b.bbox.x * zoom,

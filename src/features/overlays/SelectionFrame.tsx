@@ -1,7 +1,8 @@
-// SelectionFrame: a generic selection chrome with 8 resize handles and an
-// optional rotation handle (for image items). It handles mouse events and
-// delegates position/size/rotation updates to the document store.
-import { useRef, type PointerEvent as ReactPointerEvent } from 'react';
+// SelectionFrame: Canva 风格的选中框。实线主题色(--accent)边框、无底色,
+// 手柄为白色圆形(四角)+ 白色胶囊(四边,hover 时才出现),尺寸全部按
+// 1/zoom 换算,保证任意缩放下屏幕像素恒定。它处理鼠标事件并把
+// 位置/尺寸/旋转更新委托给 document store。
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { ImageItem, OverlayItem } from '../../core/types';
 import { useDocumentStore } from '../../store/documentStore';
 import { useEditorStore } from '../../store/editorStore';
@@ -9,8 +10,17 @@ import { pushDownSubsequentBlocks } from '../text-edit/reflow';
 
 type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'rotate';
 
-const HANDLE_SIZE = 8; // in SVG user units (PDF pt)
-const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+// 所有手柄几何量都在 SVG 用户单位(PDF pt)里除以 zoom,屏幕像素恒定。
+const CORNER_RADIUS = 5; // 白色圆点手柄半径(屏幕 10px)
+const CORNER_STROKE = 1.25; // 圆点描边宽度(屏幕 ~1.5px)
+const PILL_W = 3; // 侧边胶囊手柄:宽 6px
+const PILL_H = 9; // 高 18px —— 参照 Canva
+const HANDLE_HIT = 12; // 手柄透明命中区(屏幕 24px),便于抓取
+const HANDLE_FILL = '#ffffff';
+const HANDLE_STROKE = '#0f1015'; // Canva 手柄描边色(近黑)
+
+const CORNERS: Handle[] = ['nw', 'ne', 'sw', 'se'];
+const SIDES: Handle[] = ['n', 's', 'e', 'w'];
 
 function getOverlayBBox(item: OverlayItem): { x: number; y: number; w: number; h: number } {
   switch (item.type) {
@@ -92,6 +102,11 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
   const setSelectedOverlayId = useEditorStore((s) => s.setSelectedOverlayId);
   const tool = useEditorStore((s) => s.tool);
 
+  // Canva 行为:仅 hover / 拖拽中才显示侧边胶囊手柄,平时只显示四角圆点。
+  const [hovered, setHovered] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const showSideHandles = hovered || dragging;
+
   const startRef = useRef<{
     box: { x: number; y: number; w: number; h: number };
     pointerX: number;
@@ -112,6 +127,7 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
   function beginDrag(e: ReactPointerEvent<SVGElement>, mode: 'move' | Handle) {
     e.stopPropagation();
     (e.target as Element).setPointerCapture(e.pointerId);
+    setDragging(true);
     startRef.current = {
       box: { ...box },
       pointerX: e.clientX,
@@ -178,6 +194,7 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
   function endDrag(e: ReactPointerEvent<SVGElement>) {
     const s = startRef.current;
     startRef.current = null;
+    setDragging(false);
     try {
       (e.target as Element).releasePointerCapture(e.pointerId);
     } catch {
@@ -201,6 +218,30 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
   // the rotated element. Other items are not rotated.
   const transform = rotation ? `rotate(${rotation} ${cx} ${cy})` : undefined;
 
+  // 手柄位置共用计算:corner/side 的中心坐标。
+  function handlePos(h: Handle): { hx: number; hy: number } {
+    const hx =
+      h === 'nw' || h === 'w' || h === 'sw'
+        ? box.x
+        : h === 'n' || h === 's'
+        ? box.x + box.w / 2
+        : box.x + box.w;
+    const hy =
+      h === 'nw' || h === 'n' || h === 'ne'
+        ? box.y
+        : h === 'w' || h === 'e'
+        ? box.y + box.h / 2
+        : box.y + box.h;
+    return { hx, hy };
+  }
+
+  const accent = 'var(--accent, #2563eb)';
+
+  // edit-text 工具下 text-block 的边框由 TextBlockEditLayer 的
+  // .text-block-outline(HTML,随编辑内容伸展)负责;这里只保留拖拽
+  // 命中区 + 手柄,否则两套边框在选中/编辑态叠成两个框。
+  const hideFrameBorder = overlay.type === 'text-block' && tool !== 'select';
+
   return (
     <g
       transform={transform}
@@ -209,16 +250,19 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
         e.stopPropagation();
         setSelectedOverlayId(overlay.id);
       }}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
     >
+      {/* 选中框:实线主题色,无底色填充 —— Canva 风格 */}
       <rect
         x={box.x}
         y={box.y}
         width={box.w}
         height={box.h}
-        fill="rgba(37,99,235,0.06)"
-        stroke="#2563eb"
-        strokeWidth={1 / zoom}
-        strokeDasharray={`${4 / zoom} ${3 / zoom}`}
+        fill="none"
+        stroke={hideFrameBorder ? 'none' : accent}
+        strokeWidth={2 / zoom}
+        rx={2 / zoom}
         pointerEvents="all"
         onPointerDown={(e) => beginDrag(e, 'move')}
         onPointerMove={onMove}
@@ -226,45 +270,72 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
         onPointerCancel={endDrag}
         style={{ cursor: tool === 'select' ? 'move' : 'default' }}
       />
-      {HANDLES.map((h) => {
-        const hx =
-          h === 'nw' || h === 'w' || h === 'sw'
-            ? box.x
-            : h === 'n' || h === 's'
-            ? box.x + box.w / 2
-            : box.x + box.w;
-        const hy =
-          h === 'nw' || h === 'n' || h === 'ne'
-            ? box.y
-            : h === 'w' || h === 'e'
-            ? box.y + box.h / 2
-            : box.y + box.h;
+      {/* 四角白色圆点手柄(常显) */}
+      {CORNERS.map((h) => {
+        const { hx, hy } = handlePos(h);
         const cursor =
-          h === 'nw' || h === 'se'
-            ? 'nwse-resize'
-            : h === 'ne' || h === 'sw'
-            ? 'nesw-resize'
-            : h === 'n' || h === 's'
-            ? 'ns-resize'
-            : 'ew-resize';
+          h === 'nw' || h === 'se' ? 'nwse-resize' : 'nesw-resize';
         return (
-          <rect
-            key={h}
-            x={hx - HANDLE_SIZE / 2}
-            y={hy - HANDLE_SIZE / 2}
-            width={HANDLE_SIZE}
-            height={HANDLE_SIZE}
-            fill="white"
-            stroke="#2563eb"
-            strokeWidth={1 / zoom}
-            style={{ cursor }}
-            onPointerDown={(e) => beginDrag(e, h)}
-            onPointerMove={onMove}
-            onPointerUp={endDrag}
-            onPointerCancel={endDrag}
-          />
+          <g key={h}>
+            <rect
+              x={hx - HANDLE_HIT / zoom}
+              y={hy - HANDLE_HIT / zoom}
+              width={(HANDLE_HIT * 2) / zoom}
+              height={(HANDLE_HIT * 2) / zoom}
+              fill="transparent"
+              style={{ cursor }}
+              onPointerDown={(e) => beginDrag(e, h)}
+              onPointerMove={onMove}
+              onPointerUp={endDrag}
+              onPointerCancel={endDrag}
+            />
+            <circle
+              cx={hx}
+              cy={hy}
+              r={CORNER_RADIUS / zoom}
+              fill={HANDLE_FILL}
+              stroke={HANDLE_STROKE}
+              strokeWidth={CORNER_STROKE / zoom}
+              pointerEvents="none"
+            />
+          </g>
         );
       })}
+      {/* 四边白色胶囊手柄(hover / 拖拽时显示) */}
+      {showSideHandles &&
+        SIDES.map((h) => {
+          const { hx, hy } = handlePos(h);
+          const horizontal = h === 'e' || h === 'w';
+          const cursor = horizontal ? 'ew-resize' : 'ns-resize';
+          const w = (horizontal ? PILL_H : PILL_W) / zoom;
+          const hgt = (horizontal ? PILL_W : PILL_H) / zoom;
+          return (
+            <g key={h}>
+              <rect
+                x={hx - HANDLE_HIT / zoom}
+                y={hy - HANDLE_HIT / zoom}
+                width={(HANDLE_HIT * 2) / zoom}
+                height={(HANDLE_HIT * 2) / zoom}
+                fill="transparent"
+                style={{ cursor }}
+                onPointerDown={(e) => beginDrag(e, h)}
+                onPointerMove={onMove}
+                onPointerUp={endDrag}
+                onPointerCancel={endDrag}
+              />
+              <rect
+                x={hx - w / 2}
+                y={hy - hgt / 2}
+                width={w}
+                height={hgt}
+                rx={Math.min(w, hgt) / 2}
+                fill={HANDLE_FILL}
+                stroke="none"
+                pointerEvents="none"
+              />
+            </g>
+          );
+        })}
       {isImage && (
         <g style={{ cursor: 'grab' }}>
           <line
@@ -272,16 +343,16 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
             y1={box.y}
             x2={cx}
             y2={box.y - 20}
-            stroke="#2563eb"
-            strokeWidth={1 / zoom}
+            stroke={accent}
+            strokeWidth={1.5 / zoom}
           />
           <circle
             cx={cx}
             cy={box.y - 22}
-            r={4}
-            fill="white"
-            stroke="#2563eb"
-            strokeWidth={1 / zoom}
+            r={5 / zoom}
+            fill={HANDLE_FILL}
+            stroke={HANDLE_STROKE}
+            strokeWidth={CORNER_STROKE / zoom}
             onPointerDown={(e) => beginDrag(e, 'rotate')}
             onPointerMove={onMove}
             onPointerUp={endDrag}
