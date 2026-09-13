@@ -4,31 +4,101 @@
 //
 // 流程:
 //   1. 用 MuPDF 打开干净的原 PDF 字节
-//   2. 对每个含编辑块的页:遍历 StructuredText,收集 originalBbox 区域内
-//      的字符原始 quad(8 元组),创建 Redact 注释,setQuadPoints,
-//      applyRedactions(false, 0, 0, 0) -- 不画黑框、不动图片/矢量、只删文字
+//   2. 按 (页, 模式) 分组,每组创建一个 Redact 注释,setQuadPoints,
+//      applyRedactions(...) -- 按模式决定是否同时抹除图片/矢量
 //   3. saveToBuffer -> 返回 redacted 字节
 //
 // 关键:walker 的 quad 与 setQuadPoints 同属 MuPDF 内部坐标系,直接透传,
 // 无需任何坐标转换(旧白底路径要 pageHeight - q.y - q.h 是因为跨到 pdf-lib)。
+// 该坐标约定已由 scripts/experiment-redact.mjs 实证:被覆盖的文本消失、
+// 未被覆盖的文本保留 —— 若 y 轴方向反了,结果会恰好相反。
 //
-// 失败兜底:若 MuPDF redaction 抛错,返回原始 cleanBytes + redacted:false,
-// 调用方据此走旧白底路径。
+// 两种模式(参数语义经 experiment-redact.mjs 逐项验证,勿凭字面猜测):
+//
+//   * 'text-only'(默认,文本编辑内部路径)
+//       只删文字,图片与矢量原样保留。
+//       实验对照组:图片 1400->1400 px、矢量 381->381 px,均存活。
+//
+//   * 'full'(用户可见的「涂黑 / 密文」工具)
+//       删文字 + 抹除覆盖区域的图片像素 + 移除被触及的矢量图元。
+//       实验:被覆盖的图片半边 1400->0 px,未被覆盖的半边 1400->1400 px
+//       完好无损,矢量 381->0。这才是"真脱敏"。
+//
+// 为什么必须区分:把 'text-only' 直接用于涂黑工具会产出**假脱敏** ——
+// 黑框画上了、文字也删了,但框下的图片像素与矢量仍然留在文件里,几秒即可
+// 提取。竞品评测反复强调"AI 标记 ≠ 脱敏"正是这个陷阱。
+//
+// 失败兜底:若 MuPDF redaction 抛错,返回原始 cleanBytes + redacted:false。
+// 文本编辑路径据此走旧白底路径;涂黑路径**不允许**静默降级(见
+// features/export/exportPdf.ts 的硬失败检查),否则用户会拿到一份看起来
+// 已脱敏、实际没有脱敏的文件。
 import { loadMupdf, type MupdfNs } from '../mupdf/loader';
 import type { Rect } from '../types';
+
+/**
+ * 'text-only' = 仅删字(文本编辑内部使用);
+ * 'full'      = 真脱敏:同时抹除覆盖区域的图片像素与被触及的矢量图元。
+ */
+export type RedactMode = 'text-only' | 'full';
 
 export interface RedactEdit {
   /** 原始 PDF 中的页索引(0-based,不含 blank 页)。 */
   pageIndex: number;
   /** 检测时的原始位置(redaction 区域)。 */
   originalBbox: Rect;
+  /** 缺省 'text-only'。 */
+  mode?: RedactMode;
 }
 
 export interface RedactResult {
   bytes: Uint8Array;
-  /** true = 已成功 redact,调用方跳过白底;false = 失败,走白底兜底。 */
+  /** true = redaction 执行成功;false = 失败,调用方决定兜底策略。 */
   redacted: boolean;
 }
+
+/**
+ * applyRedactions 的四个参数。取值来自 mupdf 的 PDFPage 常量
+ * (见 node_modules/mupdf/dist/mupdf.d.ts):
+ *   REDACT_IMAGE_NONE=0 / REMOVE=1 / PIXELS=2 / UNLESS_INVISIBLE=3
+ *   REDACT_LINE_ART_NONE=0 / REMOVE_IF_COVERED=1 / REMOVE_IF_TOUCHED=2
+ *   REDACT_TEXT_REMOVE=0 / NONE=1
+ *
+ * 用 PIXELS(2) 而非 REMOVE(1):REMOVE 会把整张图片整体删掉(哪怕只有
+ * 一小角被覆盖,留下一个洞);PIXELS 只把被覆盖的像素抹掉,图片其余部分
+ * 保留 —— 扫描件正是靠这个行为才能只遮住局部。
+ *
+ * 用 REMOVE_IF_TOUCHED(2) 而非 REMOVE_IF_COVERED(1):脱敏要的是"宁可多删",
+ * 一条穿过涂黑区又伸到区外的矢量线(如签名笔画、图表折线)仍可能泄漏信息。
+ */
+const REDACT_IMAGE_PIXELS = 2;
+const REDACT_LINE_ART_REMOVE_IF_TOUCHED = 2;
+const REDACT_TEXT_REMOVE = 0;
+
+interface RedactParams {
+  blackBoxes: boolean;
+  imageMethod: number;
+  lineArtMethod: number;
+  textMethod: number;
+}
+
+/**
+ * blackBoxes 恒为 false:黑框由 flatten 阶段用用户画的那个矩形绘制,
+ * 这样"看到的框"与"被删的范围"严格一致,也才能支持自定义颜色/白色遮盖。
+ */
+const PARAMS: Record<RedactMode, RedactParams> = {
+  'text-only': {
+    blackBoxes: false,
+    imageMethod: 0,
+    lineArtMethod: 0,
+    textMethod: REDACT_TEXT_REMOVE,
+  },
+  full: {
+    blackBoxes: false,
+    imageMethod: REDACT_IMAGE_PIXELS,
+    lineArtMethod: REDACT_LINE_ART_REMOVE_IF_TOUCHED,
+    textMethod: REDACT_TEXT_REMOVE,
+  },
+};
 
 /**
  * 对 cleanBytes 应用所有编辑块的 redaction,返回 redacted 字节。
@@ -65,35 +135,53 @@ function applyRedactionsImpl(
       return { bytes, redacted: false };
     }
 
-    // 按页分组编辑块。
-    const byPage = new Map<number, Rect[]>();
+    // 按页分组,页内再按模式分组 —— 同一页可能同时存在"文本编辑的只删字"
+    // 与"涂黑工具的全量脱敏"。每组单独建注释并单独调用 applyRedactions,
+    // 每组用各自的参数。experiment-redact.mjs 的 mixed 用例已验证 MuPDF
+    // 会逐注释遵守各自参数(矢量 381->381 未被误删)。
+    const byPage = new Map<number, Map<RedactMode, Rect[]>>();
     for (const edit of edits) {
-      let list = byPage.get(edit.pageIndex);
+      const mode = edit.mode ?? 'text-only';
+      let modes = byPage.get(edit.pageIndex);
+      if (!modes) {
+        modes = new Map();
+        byPage.set(edit.pageIndex, modes);
+      }
+      let list = modes.get(mode);
       if (!list) {
         list = [];
-        byPage.set(edit.pageIndex, list);
+        modes.set(mode, list);
       }
       list.push(edit.originalBbox);
     }
 
     let totalQuadsApplied = 0;
 
-    for (const [pageIndex, bboxes] of byPage) {
+    for (const [pageIndex, modes] of byPage) {
       const page = pdfDoc.loadPage(pageIndex) as import('mupdf').PDFPage;
       try {
-        const pageQuads = collectQuadsForBboxes(mupdf, page, bboxes);
-        if (pageQuads.length === 0) continue;
+        for (const [mode, bboxes] of modes) {
+          const pageQuads =
+            mode === 'full'
+              ? bboxes.map(bboxToQuad)
+              : collectQuadsForBboxes(page, bboxes);
+          if (pageQuads.length === 0) continue;
 
-        // 创建一个 Redact 注释,塞入本页所有 quad。
-        const annot = page.createAnnotation('Redact');
-        annot.setQuadPoints(pageQuads as import('mupdf').Quad[]);
-        // 不画黑框、不动图片/矢量、只删文字。
-        page.applyRedactions(false, 0, 0, 0);
-        totalQuadsApplied += pageQuads.length;
-        try {
-          annot.destroy();
-        } catch {
-          /* ignore */
+          const annot = page.createAnnotation('Redact');
+          annot.setQuadPoints(pageQuads as import('mupdf').Quad[]);
+          const p = PARAMS[mode];
+          page.applyRedactions(
+            p.blackBoxes,
+            p.imageMethod,
+            p.lineArtMethod,
+            p.textMethod
+          );
+          totalQuadsApplied += pageQuads.length;
+          try {
+            annot.destroy();
+          } catch {
+            /* ignore */
+          }
         }
       } finally {
         page.destroy();
@@ -116,11 +204,29 @@ function applyRedactionsImpl(
 }
 
 /**
+ * 'full' 模式直接把用户画的矩形转成 quad。
+ *
+ * 不做 text-only 那套"按字符 quad 收集 + 膨胀"的精细处理,原因有二:
+ *   1. 用户画的是一个矩形,意图就是"这块区域全部抹掉"。按 bbox 精确匹配
+ *      才能让"看到的黑框"与"被删的范围"严格一致。
+ *   2. 图片/矢量区域本来就没有字符 quad 可收集(扫描件整页无文字层),
+ *      只有用 bbox 本身才能覆盖到它们。
+ *
+ * 刻意不加 padding:text-only 路径的 0.05/0.25 膨胀是为了让文本编辑不漏掉
+ * 字形边缘;但涂黑场景下,膨胀会把黑框之外的可见内容一并删掉,与用户预期
+ * 不符。
+ */
+function bboxToQuad(b: Rect): MupdfQuad {
+  return [b.x, b.y, b.x + b.w, b.y, b.x, b.y + b.h, b.x + b.w, b.y + b.h];
+}
+
+/**
  * 遍历 StructuredText,收集落在任一 bbox 区域内的字符原始 quad。
  * quad 透传不做坐标转换 -- MuPDF walker 与 setQuadPoints 同坐标系。
+ *
+ * 仅 'text-only' 模式使用:文本编辑需要按字形精确删除,避免误伤相邻文字。
  */
 function collectQuadsForBboxes(
-  _mupdf: MupdfNs,
   page: import('mupdf').PDFPage,
   bboxes: Rect[]
 ): MupdfQuad[] {
@@ -197,9 +303,7 @@ function collectQuadsForBboxes(
   // 兜底:walker 一个字都没拿到时,用 bbox 自身作为 quad(4 角点),
   // 确保至少有覆盖。这与 textQuad.ts 的 bbox 兜底语义一致。
   if (hits.length === 0) {
-    for (const b of bboxes) {
-      hits.push([b.x, b.y, b.x + b.w, b.y, b.x, b.y + b.h, b.x + b.w, b.y + b.h]);
-    }
+    return bboxes.map(bboxToQuad);
   }
   return hits;
 }

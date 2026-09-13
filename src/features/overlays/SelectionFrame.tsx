@@ -7,6 +7,7 @@ import type { ImageItem, OverlayItem } from '../../core/types';
 import { useDocumentStore } from '../../store/documentStore';
 import { useEditorStore } from '../../store/editorStore';
 import { pushDownSubsequentBlocks } from '../text-edit/reflow';
+import { computeSnap, getOverlayBBox, type Guide, type SnapBox } from './alignment';
 
 type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'rotate';
 
@@ -19,35 +20,15 @@ const HANDLE_HIT = 12; // 手柄透明命中区(屏幕 24px),便于抓取
 const HANDLE_FILL = '#ffffff';
 const HANDLE_STROKE = '#0f1015'; // Canva 手柄描边色(近黑)
 
+// 移动命中区在块 bbox 基础上外扩 MOVE_PAD_PX 屏幕像素,便于抓取小块
+// (小块 bbox 太小,直接点常常点不到)。
+const MOVE_PAD_PX = 7;
+// 对齐参考线样式 + 吸附阈值(屏幕像素,内部除以 zoom 转成 pt)。
+const GUIDE_COLOR = '#ff3b30';
+const GUIDE_THRESHOLD_PX = 6;
+
 const CORNERS: Handle[] = ['nw', 'ne', 'sw', 'se'];
 const SIDES: Handle[] = ['n', 's', 'e', 'w'];
-
-function getOverlayBBox(item: OverlayItem): { x: number; y: number; w: number; h: number } {
-  switch (item.type) {
-    case 'highlight':
-      return item.rect;
-    case 'text-block':
-    case 'form-field':
-      return item.bbox;
-    case 'note':
-    case 'text':
-    case 'image':
-      return {
-        x: item.position.x,
-        y: item.position.y,
-        w: item.size.w,
-        h: item.size.h,
-      };
-    case 'drawing':
-      // Drawings don't have a natural bbox in the model; we still draw
-      // a frame around a 1x1 default. The path itself is the source of truth.
-      return { x: 0, y: 0, w: 0, h: 0 };
-    default: {
-      const _exhaustive: never = item;
-      return _exhaustive;
-    }
-  }
-}
 
 function applyResize(
   item: OverlayItem,
@@ -78,15 +59,30 @@ function applyResize(
     case 'highlight':
       return { rect: { x, y, w, h } } as Partial<OverlayItem>;
     case 'text-block':
-    case 'form-field':
       return { bbox: { x, y, w, h } } as Partial<OverlayItem>;
-    case 'note':
     case 'text':
     case 'image':
       return {
         position: { x, y },
         size: { w, h },
       } as Partial<OverlayItem>;
+    default:
+      return {};
+  }
+}
+
+// 按 overlay 类型,把吸附后的位置写成对应的字段补丁。w/h 在对齐吸附中
+// 不变,只有 x/y 被调整。
+function buildMovePatch(item: OverlayItem, box: SnapBox): Partial<OverlayItem> {
+  switch (item.type) {
+    case 'highlight':
+    case 'redact':
+      return { rect: { x: box.x, y: box.y, w: box.w, h: box.h } };
+    case 'text-block':
+      return { bbox: { x: box.x, y: box.y, w: box.w, h: box.h } };
+    case 'text':
+    case 'image':
+      return { position: { x: box.x, y: box.y }, size: { w: box.w, h: box.h } };
     default:
       return {};
   }
@@ -101,6 +97,13 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
   const updateOverlay = useDocumentStore((s) => s.updateOverlay);
   const setSelectedOverlayId = useEditorStore((s) => s.setSelectedOverlayId);
   const tool = useEditorStore((s) => s.tool);
+  // 对齐参考线状态;仅在「移动」拖拽过程中存在,松手即清空。
+  const [guides, setGuides] = useState<Guide[]>([]);
+
+  // 取当前页尺寸 + 同页其它块的 bbox,供对齐吸附计算。
+  const pages = useDocumentStore((s) => s.pages);
+  const overlays = useDocumentStore((s) => s.overlays);
+  const page = pages.find((p) => p.id === overlay.pageId);
 
   // Canva 行为:仅 hover / 拖拽中才显示侧边胶囊手柄,平时只显示四角圆点。
   const [hovered, setHovered] = useState(false);
@@ -128,6 +131,7 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
     e.stopPropagation();
     (e.target as Element).setPointerCapture(e.pointerId);
     setDragging(true);
+    setGuides([]);
     startRef.current = {
       box: { ...box },
       pointerX: e.clientX,
@@ -147,27 +151,31 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
     const dy = (e.clientY - s.pointerY) / zoom;
 
     if (s.mode === 'move') {
-      let patch: Partial<OverlayItem>;
-      switch (overlay.type) {
-        case 'highlight':
-          patch = { rect: { x: s.box.x + dx, y: s.box.y + dy, w: s.box.w, h: s.box.h } };
-          break;
-        case 'text-block':
-        case 'form-field':
-          patch = { bbox: { x: s.box.x + dx, y: s.box.y + dy, w: s.box.w, h: s.box.h } };
-          break;
-        case 'note':
-        case 'text':
-        case 'image':
-          patch = {
-            position: { x: s.box.x + dx, y: s.box.y + dy },
-            size: { w: s.box.w, h: s.box.h },
-          };
-          break;
-        default:
-          return;
+      // 先按指针位移算出"临时块",再与同页其它块/页面边缘做对齐吸附。
+      const tentative: SnapBox = {
+        x: s.box.x + dx,
+        y: s.box.y + dy,
+        w: s.box.w,
+        h: s.box.h,
+      };
+      let snapped = tentative;
+      if (page) {
+        const others: SnapBox[] = overlays
+          .filter((o) => o.pageId === overlay.pageId && o.id !== overlay.id)
+          .map((o) => getOverlayBBox(o));
+        const res = computeSnap(
+          tentative,
+          others,
+          { width: page.width, height: page.height },
+          GUIDE_THRESHOLD_PX / zoom
+        );
+        snapped = res.box;
+        setGuides(res.guides);
       }
-      updateOverlay(overlay.id, patch);
+      const patch: Partial<OverlayItem> = buildMovePatch(overlay, snapped);
+      if (Object.keys(patch).length > 0) {
+        updateOverlay(overlay.id, patch);
+      }
       return;
     }
 
@@ -195,6 +203,7 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
     const s = startRef.current;
     startRef.current = null;
     setDragging(false);
+    setGuides([]);
     try {
       (e.target as Element).releasePointerCapture(e.pointerId);
     } catch {
@@ -237,10 +246,10 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
 
   const accent = 'var(--accent, #2563eb)';
 
-  // edit-text 工具下 text-block 的边框由 TextBlockEditLayer 的
-  // .text-block-outline(HTML,随编辑内容伸展)负责;这里只保留拖拽
-  // 命中区 + 手柄,否则两套边框在选中/编辑态叠成两个框。
-  const hideFrameBorder = overlay.type === 'text-block' && tool !== 'select';
+  // text-block 的选中边框由 TextBlockEditLayer 的 .text-block-outline(HTML)
+  // 负责(随编辑内容伸展、双击进编辑),这里不再画 SVG 边框,否则选中/
+  // 编辑态会叠成两个框。SVG 层只保留手柄 + 拖拽命中区 + 对齐参考线。
+  const hideFrameBorder = overlay.type === 'text-block';
 
   return (
     <g
@@ -253,7 +262,9 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
     >
-      {/* 选中框:实线主题色,无底色填充 —— Canva 风格 */}
+      {/* 可见选中框:实线主题色,无底色填充 —— Canva 风格。
+          本身不接收指针事件,抓取由下方放大的透明命中区负责,
+          保证小块也能轻松拖动。 */}
       <rect
         x={box.x}
         y={box.y}
@@ -263,12 +274,20 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
         stroke={hideFrameBorder ? 'none' : accent}
         strokeWidth={2 / zoom}
         rx={2 / zoom}
-        pointerEvents="all"
+        pointerEvents="none"
+      />
+      {/* 移动命中区:在 bbox 基础上外扩 MOVE_PAD_PX 屏幕像素,便于抓取小块。 */}
+      <rect
+        x={box.x - MOVE_PAD_PX / zoom}
+        y={box.y - MOVE_PAD_PX / zoom}
+        width={box.w + (MOVE_PAD_PX * 2) / zoom}
+        height={box.h + (MOVE_PAD_PX * 2) / zoom}
+        fill="transparent"
+        style={{ cursor: tool === 'select' ? 'move' : 'default' }}
         onPointerDown={(e) => beginDrag(e, 'move')}
         onPointerMove={onMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-        style={{ cursor: tool === 'select' ? 'move' : 'default' }}
       />
       {/* 四角白色圆点手柄(常显) */}
       {CORNERS.map((h) => {
@@ -336,6 +355,33 @@ export function SelectionFrame({ overlay, zoom }: SelectionFrameProps) {
             </g>
           );
         })}
+      {/* 对齐参考线(移动拖拽中):贯穿全页的红线,与页面边缘/中心及其它
+          块的对应边对齐时显示,帮助用户对齐。pointerEvents=none 不挡操作。 */}
+      {guides.map((g, i) =>
+        g.axis === 'v' ? (
+          <line
+            key={`gv-${i}`}
+            x1={g.pos}
+            y1={0}
+            x2={g.pos}
+            y2={page ? page.height : box.y + box.h}
+            stroke={GUIDE_COLOR}
+            strokeWidth={1 / zoom}
+            pointerEvents="none"
+          />
+        ) : (
+          <line
+            key={`gh-${i}`}
+            x1={0}
+            y1={g.pos}
+            x2={page ? page.width : box.x + box.w}
+            y2={g.pos}
+            stroke={GUIDE_COLOR}
+            strokeWidth={1 / zoom}
+            pointerEvents="none"
+          />
+        )
+      )}
       {isImage && (
         <g style={{ cursor: 'grab' }}>
           <line

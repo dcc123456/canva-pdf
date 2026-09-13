@@ -12,7 +12,7 @@ _Prior terminology_: PDF annotator, canvas overlay editor
 _Avoid_: source pdf, original document
 
 **Overlay**:
-独立的覆盖对象(高亮/便签/文字/图片/画笔/文本块/表单),叠加在 PDF 渲染层之上。导出时通过 `flatten.ts` 转换为 pdf-lib 绘制命令。
+独立的覆盖对象(高亮/涂黑/文字/图片/画笔/文本块),叠加在 PDF 渲染层之上。导出时通过 `flatten.ts` 转换为 pdf-lib 绘制命令。
 _Avoid_: annotation, layer object
 
 **TextBlock**:
@@ -57,7 +57,7 @@ _Avoid_: byte-level erase, content removal
 ### 引擎
 
 **Engine**:
-文本/表单检测后端,按优先级降级:`mupdf` > `pdfium` > `pdflib-overlay`。三种 EngineKind 在 `core/engine/types.ts` 中定义。
+文本块检测后端,按优先级降级:`mupdf` > `pdfium` > `pdflib-overlay`。三种 EngineKind 在 `core/engine/types.ts` 中定义。引擎只保留只读的 `detectTextBlocks` —— 表单解析(`parseFormFields`)已随表单功能移除。
 _Avoid_: backend, parser
 
 **Engine Routing**:
@@ -74,8 +74,12 @@ _Avoid_: font category, font family class
 PDF 字体名 -> fontClass -> 具体字体的两段式映射。西文按衬线/无衬线/等宽划分;CJK 按黑体/宋体划分。同一 fontClass 在 TipTap(CSS font-family + @font-face 本地资源)和 pdf-lib(embedFont)两端使用**同一份字体文件**,保证视觉一致。
 _Avoid_: font table, font resolution
 
-### 表单
+### 已移除的领域概念
 
 **AcroForm Field**:
-PDF 内嵌的交互式表单字段(text/checkbox/radio/select/signature)。本项目只支持读取与写值,不支持从空白 PDF 创建新 AcroForm 字段。
+PDF 内嵌的交互式表单字段(text/checkbox/radio/select/signature)。**本项目已移除表单功能** —— 早先的实现只能读原字段并在导出时用 pdf-lib 重建,无法新建字段树,属于半成品。`FormFieldItem`、`parseFormFields`、`features/forms/`、`core/writer/formFields.ts` 均已删除。
 _Avoid_: pdf form, interactive field
+
+**Sticky Note**:
+便签叠加层(`type: 'note'`)。**已移除** —— 与「文字」叠加层能力重叠,且导出后不可再编辑。`StickyNoteItem` 与 Inspector 的 `NoteControls` 均已删除,需要贴纸效果请用「高亮」。
+_Avoid_: comment, annotation pin

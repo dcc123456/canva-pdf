@@ -61,33 +61,32 @@ export function ElementRenderer({ overlay, selected = false }: ElementRendererPr
         />
       );
     }
-    case 'note': {
-      // Phase 7: square corners (pdf-lib does not support rounded rects),
-      // opacity 0.9, stroke #a16207, text 80 chars with \n support.
-      const noteLines = overlay.text.slice(0, 80).split('\n');
+    case 'redact': {
+      // 实心遮盖块。编辑器里额外加一圈虚线描边 —— 纯黑块画在白纸上与页面
+      // 正文难以区分,用户会找不到、也选不中自己画过的密文框。该描边只存在
+      // 于编辑器 SVG,导出走 flatten,不会被画进 PDF。
       return (
         <g pointerEvents="none">
           <rect
-            x={overlay.position.x}
-            y={overlay.position.y}
-            width={overlay.size.w}
-            height={overlay.size.h}
+            x={overlay.rect.x}
+            y={overlay.rect.y}
+            width={overlay.rect.w}
+            height={overlay.rect.h}
             fill={overlay.color}
-            fillOpacity={0.9}
-            stroke="#a16207"
-            strokeWidth={1}
           />
-          {noteLines.map((line, i) => (
-            <text
-              key={i}
-              x={overlay.position.x + 6}
-              y={overlay.position.y + 16 + i * 12}
-              fontSize={10}
-              fill="#1f2937"
-            >
-              {line}
-            </text>
-          ))}
+          {!selected && (
+            <rect
+              x={overlay.rect.x}
+              y={overlay.rect.y}
+              width={overlay.rect.w}
+              height={overlay.rect.h}
+              fill="transparent"
+              stroke="#b45309"
+              strokeOpacity={0.75}
+              strokeWidth={0.75}
+              strokeDasharray="4 3"
+            />
+          )}
         </g>
       );
     }
@@ -299,20 +298,6 @@ export function ElementRenderer({ overlay, selected = false }: ElementRendererPr
             </foreignObject>
           )}
         </>
-      );
-    }
-    case 'form-field': {
-      return (
-        <rect
-          x={overlay.bbox.x}
-          y={overlay.bbox.y}
-          width={overlay.bbox.w}
-          height={overlay.bbox.h}
-          fill="rgba(34,197,94,0.1)"
-          stroke="#22c55e"
-          strokeWidth={0.5}
-          pointerEvents="none"
-        />
       );
     }
     default: {

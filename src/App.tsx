@@ -12,14 +12,14 @@ import { TemplateGallery } from './features/templates/TemplateGallery';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Toaster } from './components/Toaster';
 import { ShortcutsModal } from './components/ShortcutsModal';
+import { ReformatPromptDialog } from './components/ReformatPromptDialog';
 import { EmptyState } from './components/EmptyState';
 import { pdfjsLib } from './core/pdf/loader';
 import { useDocumentStore } from './store/documentStore';
 import { useEditorStore } from './store/editorStore';
-import { useTemplateStore } from './store/templateStore';
 import { useEngineStore } from './store/engineStore';
 import { useHistoryStore } from './store/historyStore';
-import { reformatDocument } from './features/text-edit/reformatDocument';
+import { detectAllTextBlocks } from './features/text-edit/reformatDocument';
 import type { PageMeta } from './core/types';
 import { toast } from './utils/toast';
 
@@ -28,15 +28,20 @@ function App() {
   const [signatureOpen, setSignatureOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // 选中文件后先挂起,等用户在 ReformatPromptDialog 里明确选择
+  // 「全文格式化 / 保持原样」再真正打开。
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const sidebarCollapsed = useEditorStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useEditorStore((s) => s.setSidebarCollapsed);
   const inspectorCollapsed = useEditorStore((s) => s.inspectorCollapsed);
   const setInspectorCollapsed = useEditorStore((s) => s.setInspectorCollapsed);
+  // The store's bytes are the single source of truth for what the Viewer shows;
+  // the effect below rebinds pdfjs whenever they change (see its comment).
+  const pdfBytes = useDocumentStore((s) => s.pdfBytes);
 
   // Touch all stores so they are constructed on app load.
   useDocumentStore.getState();
   useEditorStore.getState();
-  useTemplateStore.getState();
   useEngineStore.getState();
   useHistoryStore.getState();
 
@@ -69,22 +74,27 @@ function App() {
 
   // When template/project load sets doc=null, this effect notices
   // doc===null && store.pdfBytes!==null and auto-reloads the pdfjs document.
+  //
+  // It also keys off `pdfBytes`, because the null-transition trick alone is not
+  // enough: applying a template while NO pdf is open calls `setDoc(null)` on a
+  // state that is already `null`, React bails out, and the effect never runs —
+  // so the template silently rendered as a blank page. Watching the bytes makes
+  // the Viewer follow the store regardless of how the bytes got there.
   useEffect(() => {
     if (doc !== null) return;
-    const bytes = useDocumentStore.getState().pdfBytes;
-    if (!bytes) return;
+    if (!pdfBytes) return;
     let cancelled = false;
     (async () => {
       try {
         // Clone the buffer: pdfjs transfers (detaches) it internally.
-        const task = pdfjsLib.getDocument({ data: new Uint8Array(bytes) });
+        const task = pdfjsLib.getDocument({ data: new Uint8Array(pdfBytes) });
         const next = await task.promise;
         if (!cancelled) {
           setDoc(next);
           // eslint-disable-next-line no-console
           console.log(
             '[App] pdfjs document reloaded from %d bytes, %d pages',
-            bytes.byteLength,
+            pdfBytes.byteLength,
             next.numPages
           );
         }
@@ -95,9 +105,20 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [doc]);
+  }, [doc, pdfBytes]);
 
-  async function handleOpenFile(file: File) {
+  /**
+   * 用户选好文件后先不加载,弹窗询问是否全文格式化 —— 这是针对**这一份
+   * 文档**的一次性决定,而不是编辑器全局设置(见 ReformatPromptDialog)。
+   */
+  function handleOpenFile(file: File) {
+    setPendingFile(file);
+  }
+
+  /**
+   * 真正加载 PDF。`reformat` 由 ReformatPromptDialog 的选择传入。
+   */
+  async function loadPdf(file: File, reformat: boolean) {
     try {
       const buffer = await file.arrayBuffer();
       const sharedView = new Uint8Array(buffer);
@@ -129,18 +150,21 @@ function App() {
       setCurrentPage(0);
       toast.success(`已打开 ${file.name}`);
 
-      // 全文格式化(开关启用时):把全部文本按项目字体重排一遍,
-      // 保证整份文档样式统一。异步分页执行,进度条反馈;失败时
-      // 保留原字节继续编辑。
-      if (useEditorStore.getState().fullReformat) {
+      // 全文格式化(用户选择时):把全部页面的文本块检测出来,作为可编辑
+      // overlay 写入。**非破坏性** —— 原始 PDF 字节不动,Viewer 继续显示
+      // 原文档(外观零改变),双击任意文字块即可进入编辑;导出时只有被改
+      // 过的块才会按项目字体重画,未改动的块保持原 PDF 外观。
+      // (早期破坏性实现会整份文档按项目字体重排,对任意版式都会丢失
+      // fidelity,表现为"乱码 + 格式乱",已废弃。)
+      if (reformat) {
         const eng = useEngineStore.getState();
         eng.setDetectionVisible(true);
         eng.setDetectionProgress(0);
         eng.setDetectionLabel('准备中');
-        eng.setDetectionTitle('正在全文格式化');
+        eng.setDetectionTitle('正在检测全文文本');
         eng.setEngineStatusMessage(null);
         try {
-          const { bytes: newBytes, blocks } = await reformatDocument({
+          const blocks = await detectAllTextBlocks({
             pdfBytes,
             pages: newPages,
             onProgress: (p, label) => {
@@ -148,16 +172,13 @@ function App() {
               if (label) eng.setDetectionLabel(label);
             },
           });
-          // 全部文本块直接写入 overlay:后续各页无需再检测,
-          // 且编辑任一块的"原文"就是格式化后的文本。
+          // 全部文本块写入 overlay:后续双击即可编辑;未编辑的块导出时
+          // 不重画(原始 PDF 外观完全保留)。
           useDocumentStore.getState().setOverlays(blocks);
-          setPdfBytes(newBytes);
-          // 丢弃原 pdfjs 文档,让 Viewer 从格式化后的字节重新加载。
-          setDoc(null);
-          toast.success('全文已按项目格式化');
+          toast.success(`全文文本已可编辑(${blocks.length} 块)`);
         } catch (err) {
-          console.error('[App] 全文格式化失败,保留原 PDF 样式:', err);
-          toast.error('全文格式化失败,已保留原样式');
+          console.error('[App] 全文检测失败,保留原 PDF:', err);
+          toast.error('全文检测失败,已保留原样式');
         } finally {
           eng.setDetectionProgress(1);
           eng.setDetectionTitle(null);
@@ -183,11 +204,6 @@ function App() {
       <div className="flex h-screen w-screen flex-col bg-gray-100 text-gray-900 dark:bg-gray-900 dark:text-gray-100">
         <TopBar
           onOpenFile={handleOpenFile}
-          onProjectLoaded={() => {
-            // The viewer needs a fresh pdfjs document; clear the existing
-            // one so the next render reloads from the current store bytes.
-            setDoc(null);
-          }}
           onOpenTemplates={() => setTemplatesOpen(true)}
         />
         <Toolbar
@@ -241,9 +257,21 @@ function App() {
           open={shortcutsOpen}
           onClose={() => setShortcutsOpen(false)}
         />
+        {/* 打开 PDF 时的一次性确认:全文格式化 or 保持原样 */}
+        <ReformatPromptDialog
+          open={pendingFile !== null}
+          fileName={pendingFile?.name ?? ''}
+          onChoose={(reformat) => {
+            const f = pendingFile;
+            setPendingFile(null);
+            if (f) void loadPdf(f, reformat);
+          }}
+          onCancel={() => setPendingFile(null)}
+        />
         <Toaster />
         <ShortcutsOpener onOpen={() => setShortcutsOpen(true)} />
         <TemplatesOpener onOpen={() => setTemplatesOpen(true)} />
+        <SignatureOpener onOpen={() => setSignatureOpen(true)} />
         <DocumentReplacedListener
           onReplace={() => {
             setDoc(null);
@@ -319,6 +347,20 @@ function TemplatesOpener({ onOpen }: { onOpen: () => void }) {
     const handler = () => onOpen();
     window.addEventListener('canva:open-templates', handler);
     return () => window.removeEventListener('canva:open-templates', handler);
+  }, [onOpen]);
+  return null;
+}
+
+/**
+ * Listen for the `S` shortcut (and any future programmatic trigger) and open
+ * the signature dialog. The `I` shortcut has no equivalent here — it dispatches
+ * `canva:open-image-picker`, which CanvasInteractionLayer already handles.
+ */
+function SignatureOpener({ onOpen }: { onOpen: () => void }) {
+  useEffect(() => {
+    const handler = () => onOpen();
+    window.addEventListener('canva:open-signature', handler);
+    return () => window.removeEventListener('canva:open-signature', handler);
   }, [onOpen]);
   return null;
 }

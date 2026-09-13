@@ -2,23 +2,19 @@
 //
 // 基于 Artifex 官方 MuPDF.js (WebAssembly) 的检测引擎。
 //
-// 重构后只保留 detectTextBlocks(toStructuredText 抽取结构化文本)和
-// parseFormFields(委托给 pdfLibFallback)。文本编辑不再在编辑时调
-// 引擎 -- 编辑只改 overlay,导出时用 core/writer/textBlockEdits.ts
-// 统一应用(字符级白底 + 重画)。
+// 重构后只保留 detectTextBlocks(toStructuredText 抽取结构化文本)。
+// 文本编辑不再在编辑时调引擎 -- 编辑只改 overlay,导出时用
+// core/writer/textBlockEdits.ts 统一应用(字符级白底 + 重画)。
 //
 // CJK 字体加载已移至 core/writer/cjkFont.ts;
 // 字符 quad 收集已移至 core/writer/textQuad.ts。
 import type {
   DetectTextBlocksOptions,
   EngineInterface,
-  FormField,
-  ParseFormFieldsOptions,
   TextBlock,
 } from '../engine/types';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import type { FontClass, RichTextSegment } from '../types';
-import { pdfLibFallbackEngine as pdfLibFallback } from '../engine/pdfLibFallback';
 import { loadMupdf, type MupdfNs } from './loader';
 import { classifyFontWithFallback, isSymbolFontName } from '../engine/fontClassify';
 import { extractTextColors, matchColorsToAtoms } from '../pdf/textColor';
@@ -582,12 +578,6 @@ export const mupdfEngine: EngineInterface = {
   }: DetectTextBlocksOptions): Promise<TextBlock[]> {
     const mupdf = await loadMupdf();
     return detectTextBlocksImpl(mupdf, new Uint8Array(pdfBytes), pageIndex);
-  },
-
-  async parseFormFields({
-    pdfBytes,
-  }: ParseFormFieldsOptions): Promise<FormField[]> {
-    return pdfLibFallback.parseFormFields({ pdfBytes });
   },
 };
 

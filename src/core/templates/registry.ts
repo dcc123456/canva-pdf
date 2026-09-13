@@ -310,6 +310,10 @@ export async function applyBuiltinTemplate(
   const bytes = await generateBuiltinPdf(id);
 
   // Probe numPages through pdfjs so we set totalPages correctly.
+  // `loadDocument` hands pdfjs a *copy* of `bytes`, so the original is still
+  // valid for `setPdfBytes` below — before that fix this line detached the
+  // buffer and every later read of the stored bytes threw
+  // "Cannot perform Construct on a detached or out-of-bounds ArrayBuffer".
   const doc = await loadDocument(bytes);
   const numPages = doc.numPages;
 

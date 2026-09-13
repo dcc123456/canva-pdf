@@ -38,9 +38,12 @@ describe('pdfiumEngine', () => {
     expect(pdfiumEngine.kind).toBe('pdfium');
   });
 
-  it('exposes the two EngineInterface methods (detect/parse)', () => {
+  it('exposes the EngineInterface detect method', () => {
     expect(typeof pdfiumEngine.detectTextBlocks).toBe('function');
-    expect(typeof pdfiumEngine.parseFormFields).toBe('function');
+  });
+
+  it('no longer exposes parseFormFields (form feature removed)', () => {
+    expect('parseFormFields' in pdfiumEngine).toBe(false);
   });
 
   it('detectTextBlocks rejects gracefully when wasm is unreachable in this env', async () => {

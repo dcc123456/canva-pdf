@@ -1,18 +1,17 @@
 // TopBar: top-level bar with logo, file operations, undo/redo, accent picker,
 // and theme toggle. Extracted from the original Toolbar.tsx.
 //
-// Layout: [Logo | 模板]  [打开PDF | 保存 | 打开项目 | 导出PDF]  [↶ ↷ | 5色块 | ☀/🌙 | ?]
+// Layout: [Logo | 模板]  [打开PDF | 保存 | 导出PDF]  [↶ ↷ | 5色块 | ☀/🌙 | ?]
 //
 // Height: h-11 (44px). Uses --accent CSS variables for the export button.
 import { useState } from 'react';
 import { useHistoryStore } from '../store/historyStore';
 import { useEngineStore } from '../store/engineStore';
-import { useEditorStore } from '../store/editorStore';
 import { exportPdf } from '../features/export/exportPdf';
 import { saveProject } from '../features/project-io/saveProject';
-import { loadProject } from '../features/project-io/loadProject';
 import { LoadingOverlay } from './LoadingOverlay';
 import { toast } from '../utils/toast';
+import { formatBytes } from '../utils/formatBytes';
 import {
   applyTheme,
   getStoredTheme,
@@ -28,7 +27,6 @@ import {
 
 export interface TopBarProps {
   onOpenFile: (file: File) => void;
-  onProjectLoaded?: () => void;
   onOpenTemplates?: () => void;
 }
 
@@ -40,7 +38,7 @@ const ACCENT_COLOR_LABELS: Record<AccentColor, string> = {
   amber: '琥珀',
 };
 
-export function TopBar({ onOpenFile, onProjectLoaded, onOpenTemplates }: TopBarProps) {
+export function TopBar({ onOpenFile, onOpenTemplates }: TopBarProps) {
   const pastLen = useHistoryStore((s) => s.past.length);
   const futureLen = useHistoryStore((s) => s.future.length);
   const undo = useHistoryStore((s) => s.undo);
@@ -54,9 +52,6 @@ export function TopBar({ onOpenFile, onProjectLoaded, onOpenTemplates }: TopBarP
   const detectionTitle = useEngineStore((s) => s.detectionTitle);
   const engineStatusMessage = useEngineStore((s) => s.engineStatusMessage);
 
-  const fullReformat = useEditorStore((s) => s.fullReformat);
-  const setFullReformat = useEditorStore((s) => s.setFullReformat);
-
   const [busyPhase, setBusyPhase] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
@@ -69,8 +64,12 @@ export function TopBar({ onOpenFile, onProjectLoaded, onOpenTemplates }: TopBarP
     setBusyPhase('load');
     try {
       const result = await exportPdf((p) => setBusyPhase(p.phase));
-      setStatusMsg(`已导出 ${result.filename} (${result.bytes} B)`);
-      toast.success('PDF 已导出');
+      // 导出成功:toast 与状态栏都明确写出文件名 + 可读体积,
+      // 避免"只显示导出成功"却看不到文件的体验。
+      // toast 寿命 6 s,留出时间注意到下载条;状态栏在顶部,4 s 后清空。
+      const size = formatBytes(result.bytes);
+      setStatusMsg(`已导出 ${result.filename} (${size})`);
+      toast.success(`已导出 ${result.filename} · ${size}`, { lifetime: 6000 });
     } catch (err) {
       console.error(err);
       const msg = err instanceof Error ? err.message : String(err);
@@ -88,20 +87,6 @@ export function TopBar({ onOpenFile, onProjectLoaded, onOpenTemplates }: TopBarP
       setStatusMsg(`已保存 ${result.filename} (${result.bytes} B)`);
     } catch (err) {
       setStatusMsg(`保存失败: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      window.setTimeout(() => setStatusMsg(null), 4000);
-    }
-  }
-
-  async function handleOpenProject() {
-    try {
-      await loadProject({ onPdfJsDoc: () => onProjectLoaded?.() });
-      setStatusMsg('项目已加载');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!/cancel/i.test(msg)) {
-        setStatusMsg(`打开失败: ${msg}`);
-      }
     } finally {
       window.setTimeout(() => setStatusMsg(null), 4000);
     }
@@ -146,19 +131,8 @@ export function TopBar({ onOpenFile, onProjectLoaded, onOpenTemplates }: TopBarP
           </button>
         )}
 
-        {/* 全文格式化开关:打开 PDF 时把全部文本按项目字体重排,全文样式统一 */}
-        <label
-          title="打开 PDF 时自动把全文按本项目支持的字体重排一遍,保证整份文档样式统一(编辑前后不再混排两种样式)。耗时与文档大小相关,处理期间会显示进度。"
-          className="flex cursor-pointer items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-        >
-          <input
-            type="checkbox"
-            checked={fullReformat}
-            onChange={(e) => setFullReformat(e.target.checked)}
-            className="h-3 w-3"
-          />
-          全文格式化
-        </label>
+        {/* 「全文格式化」不再是常驻开关:它是针对单份文档的一次性决定,
+            改为打开 PDF 时弹窗询问(见 ReformatPromptDialog + App)。 */}
       </div>
 
       {/* Center: file operations */}
@@ -185,15 +159,6 @@ export function TopBar({ onOpenFile, onProjectLoaded, onOpenTemplates }: TopBarP
           className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
         >
           保存
-        </button>
-
-        <button
-          type="button"
-          onClick={handleOpenProject}
-          title="打开项目 (.minipdf.json)"
-          className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-        >
-          打开项目
         </button>
 
         {/* Export: accent-colored primary action button */}

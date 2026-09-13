@@ -55,7 +55,7 @@ export function OverlayLayer({ page }: OverlayLayerProps) {
         >
           <ElementRenderer overlay={o} selected={o.id === selectedOverlayId} />
           {/* For types that are pointer-inert, we add a transparent hit area. */}
-          {(o.type === 'image' || o.type === 'highlight' || o.type === 'text-block' || o.type === 'form-field') && (
+          {(o.type === 'image' || o.type === 'highlight' || o.type === 'redact' || o.type === 'text-block') && (
             <OverlayHitArea overlay={o} />
           )}
         </g>
@@ -95,6 +95,7 @@ function OverlayHitArea({ overlay }: { overlay: import('../../core/types').Overl
         />
       );
     case 'highlight':
+    case 'redact':
       return (
         <rect
           x={overlay.rect.x}
@@ -105,7 +106,6 @@ function OverlayHitArea({ overlay }: { overlay: import('../../core/types').Overl
         />
       );
     case 'text-block':
-    case 'form-field':
       return (
         <rect
           x={overlay.bbox.x}

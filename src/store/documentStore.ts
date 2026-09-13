@@ -192,7 +192,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
         const idx = draft.overlays.findIndex((o) => o.id === id);
         if (idx === -1) continue;
         const ov = draft.overlays[idx];
-        if (ov.type === 'text-block' || ov.type === 'form-field') {
+        if (ov.type === 'text-block') {
           ov.bbox = { ...ov.bbox, y: ov.bbox.y + dy };
         }
       }

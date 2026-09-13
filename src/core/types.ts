@@ -2,14 +2,12 @@
 
 export type Tool =
   | 'select'
-  | 'edit-text'
   | 'highlight'
-  | 'note'
   | 'text'
   | 'image'
   | 'draw'
   | 'signature'
-  | 'form';
+  | 'redact';
 
 /** Canonical font category used for rendering (see ADR 0001). */
 export type FontClass = 'sans' | 'serif' | 'mono' | 'cjk-sans' | 'cjk-serif';
@@ -62,14 +60,6 @@ export interface HighlightItem extends OverlayBase {
   rect: Rect;
   color: string;
   opacity: number;
-}
-
-export interface StickyNoteItem extends OverlayBase {
-  type: 'note';
-  position: { x: number; y: number };
-  size: { w: number; h: number };
-  text: string;
-  color: string;
 }
 
 // F3
@@ -147,24 +137,30 @@ export interface TextBlockItem extends OverlayBase {
   fontClass?: FontClass;
 }
 
-// F11
-export interface FormFieldItem extends OverlayBase {
-  type: 'form-field';
-  fieldName: string;
-  kind: 'text' | 'checkbox' | 'radio' | 'select' | 'signature';
-  bbox: Rect;
-  options?: string[];
-  value: string | boolean;
+// R1 — 涂黑 / 密文
+//
+// 与 highlight 的**本质区别**:highlight 只是画一层半透明色块,原文仍在
+// 内容流里,可以复制、可以提取;redact 在导出时会把该矩形内的文字**从
+// 内容流中字节级删除**,并抹除覆盖区域的图片像素、移除被触及的矢量图元
+// (见 core/writer/redact.ts 的 'full' 模式)。
+//
+// 因此这个 overlay 的 rect 是**破坏性**的:导出后不可撤销。
+export interface RedactItem extends OverlayBase {
+  type: 'redact';
+  rect: Rect;
+  /** 遮盖色,默认纯黑。设为白色即为"涂白"。 */
+  color: string;
+  /** 可选备注(导出时**不会**写进 PDF,仅本地记录遮盖原因)。 */
+  label?: string;
 }
 
 export type OverlayItem =
   | HighlightItem
-  | StickyNoteItem
   | TextItem
   | ImageItem
   | DrawingItem
   | TextBlockItem
-  | FormFieldItem;
+  | RedactItem;
 
 export interface ProjectFile {
   version: 2;

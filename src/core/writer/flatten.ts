@@ -12,16 +12,30 @@ import type { PDFFont } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import type {
   DrawingItem,
+  FontClass,
   HighlightItem,
   ImageItem,
   OverlayItem,
   PageMeta,
   Rect,
-  StickyNoteItem,
+  RedactItem,
   TextItem,
 } from '../types';
 import { hexToRgb, pickStandardFont, wrapText, alignedX } from './helpers';
-import { loadCjkFontBytes, containsNonAscii } from './cjkFont';
+import {
+  loadCjkFontBytesForVariant,
+  containsNonAscii,
+  type FontWeight,
+} from './cjkFont';
+
+/** 把非 ASCII 字符替换为 '?'(StandardFonts 仅覆盖 WinAnsi)。 */
+function toAsciiSafe(text: string): string {
+  let safe = '';
+  for (const ch of text) {
+    safe += (ch.codePointAt(0) ?? 0) > 0x7e ? '?' : ch;
+  }
+  return safe;
+}
 
 export async function flattenOverlays(
   doc: PDFDocument,
@@ -39,41 +53,58 @@ export async function flattenOverlays(
     return f;
   }
 
-  // CJK 字体支持:便签/文字工具的文字可能含中文,StandardFonts 不支持。
-  let cjkFont: PDFFont | null = null;
-  let cjkFontAttempted = false;
+  // CJK 字体支持:文字工具的文字可能含中文,StandardFonts 不支持。
+  //
+  // 缓存按 (fontClass, weight) 分桶 —— 与 textBlockEdits.ts 的 getFont 保持
+  // 一致。旧实现只有单个 `cjkFont` 变量且恒加载 ('cjk-sans','regular'),
+  // 导致「文字」叠加层无论选中文衬线还是加粗,导出后都是思源黑体常规体。
+  const cjkFontCache = new Map<string, PDFFont>();
+  const cjkFontAttempted = new Set<string>();
 
   async function getFontForText(
     text: string,
     bold = false,
     italic = false,
-    fontName = 'Helvetica'
+    fontName = 'Helvetica',
+    fontClass: FontClass = 'sans'
   ): Promise<{ font: PDFFont; safe: string }> {
-    const needsCjk = containsNonAscii(text);
-    if (needsCjk) {
-      if (!cjkFontAttempted) {
-        cjkFontAttempted = true;
+    // 防御:fontClass 为 'sans' 但文本含 CJK,说明是未携带 fontClass 的
+    // 旧数据,兜底到 cjk-sans,否则会走 StandardFonts 把中文写成 '?'。
+    const effectiveClass: FontClass =
+      fontClass === 'sans' && containsNonAscii(text) ? 'cjk-sans' : fontClass;
+
+    if (effectiveClass === 'cjk-sans' || effectiveClass === 'cjk-serif') {
+      const weight: FontWeight = bold ? 'bold' : 'regular';
+      const key = `cjk:${effectiveClass}:${weight}`;
+      if (!cjkFontAttempted.has(key)) {
+        cjkFontAttempted.add(key);
         doc.registerFontkit(fontkit);
-        const bytes = await loadCjkFontBytes();
+        const bytes = await loadCjkFontBytesForVariant(effectiveClass, weight);
         if (bytes) {
-          cjkFont = await doc.embedFont(bytes, { subset: false });
+          try {
+            // subset: true —— 与 textBlockEdits 一致。旧实现用 subset: false
+            // 并注释"CID/CFF 子集可能丢字形",该判断已被
+            // scripts/experiment-subset.mjs 证伪(200 汉字 -> 201 个字形轮廓,
+            // 文字提取逐字符全等,体积 7289 KB -> 68.5 KB)。
+            cjkFontCache.set(key, await doc.embedFont(bytes, { subset: true }));
+          } catch (err) {
+            console.warn('[flatten] embedFont %s 失败:', key, err);
+          }
         }
       }
+      const cjkFont = cjkFontCache.get(key);
       if (cjkFont) {
+        // 注:CJK italic 依赖 CTM 斜切模拟,当前 flatten 未实现(仅
+        // textBlockEdits 路径支持),此处 italic 对 CJK 不生效。
         return { font: cjkFont, safe: text };
       }
-      // CJK 不可用 -- 替换为 '?' 降级。
+      // CJK 不可用 -- 退回 StandardFonts,非 ASCII 替换为 '?' 降级。
       const name = pickStandardFont(fontName, bold, italic);
-      const f = await getFont(name);
-      let safe = '';
-      for (const ch of text) {
-        safe += (ch.codePointAt(0) ?? 0) > 0x7e ? '?' : ch;
-      }
-      return { font: f, safe };
+      return { font: await getFont(name), safe: toAsciiSafe(text) };
     }
+
     const name = pickStandardFont(fontName, bold, italic);
-    const f = await getFont(name);
-    return { font: f, safe: text };
+    return { font: await getFont(name), safe: text };
   }
 
   const pageById = new Map<string, { page: PDFPage; meta: PageMeta }>();
@@ -93,8 +124,8 @@ export async function flattenOverlays(
         drawHighlight(page, overlay, meta, pageHeight);
         break;
       }
-      case 'note': {
-        await drawNote(page, overlay, pageHeight, getFontForText);
+      case 'redact': {
+        drawRedact(page, overlay, meta, pageHeight);
         break;
       }
       case 'text': {
@@ -114,12 +145,6 @@ export async function flattenOverlays(
         // 未编辑的原字已在 PDF 里)。flatten 阶段跳过。
         break;
       }
-      case 'form-field': {
-        console.warn(
-          `[flatten] overlay type "form-field" is not exported in MVP.`
-        );
-        break;
-      }
       default: {
         const _exhaustive: never = overlay;
         void _exhaustive;
@@ -135,6 +160,32 @@ function pdfYFromTop(
 ): number {
   // Store is y-down from the top; pdf-lib wants y-up from the bottom.
   return pageHeight - rectTopY - rectHeight;
+}
+
+// R1 — 涂黑 / 密文遮盖块。
+//
+// 只负责"画框";真正的删除由 core/writer/redact.ts 的 'full' 模式在
+// flatten 之前完成(MuPDF 字节级删字 + 抹除图片像素 + 移除矢量图元)。
+// 两者用同一个 rect,所以"看到的框"与"被删的范围"严格一致。
+//
+// blackBoxes 在 redact.ts 里恒为 false —— 正因为黑框由这里绘制,才能支持
+// 自定义颜色(涂白)并与编辑器所见一致。
+function drawRedact(
+  page: PDFPage,
+  item: RedactItem,
+  meta: PageMeta,
+  pageHeight: number
+): void {
+  const r: Rect = item.rect;
+  const y = pdfYFromTop(r.y, r.h, pageHeight);
+  page.drawRectangle({
+    x: r.x,
+    y,
+    width: r.w,
+    height: r.h,
+    color: rgbFromHex(item.color),
+    rotate: meta.rotation !== 0 ? degrees(meta.rotation) : undefined,
+  });
 }
 
 function drawHighlight(
@@ -156,50 +207,6 @@ function drawHighlight(
   });
 }
 
-// Phase 7: unified note style - square corners, opacity 0.9, stroke #a16207,
-// text 80 chars with \n multi-line support, CJK font via getFontForText.
-async function drawNote(
-  page: PDFPage,
-  item: StickyNoteItem,
-  pageHeight: number,
-  getFontForText: (
-    text: string,
-    bold?: boolean,
-    italic?: boolean,
-    fontName?: string
-  ) => Promise<{ font: PDFFont; safe: string }>
-): Promise<void> {
-  const y = pdfYFromTop(item.position.y, item.size.h, pageHeight);
-  page.drawRectangle({
-    x: item.position.x,
-    y,
-    width: item.size.w,
-    height: item.size.h,
-    color: rgbFromHex(item.color),
-    opacity: 0.9,
-    borderColor: rgbFromHex('#a16207'),
-    borderWidth: 1,
-  });
-  if (item.text) {
-    const snippet = item.text.slice(0, 80);
-    const { font, safe } = await getFontForText(snippet);
-    const lines = safe.split('\n');
-    const fontSize = 10;
-    const lineStep = fontSize * 1.2;
-    // Baseline of first line: 16pt from the top of the note (matches SVG).
-    const baseY = y + item.size.h - 16;
-    for (let i = 0; i < lines.length; i++) {
-      page.drawText(lines[i], {
-        x: item.position.x + 6,
-        y: baseY - i * lineStep,
-        size: fontSize,
-        font,
-        color: rgb(0.1, 0.1, 0.1),
-      });
-    }
-  }
-}
-
 // Phase 2+3+4+6: drawTextItem with multi-line, auto-wrap, alignment, segments.
 async function drawTextItem(
   page: PDFPage,
@@ -210,7 +217,8 @@ async function drawTextItem(
     text: string,
     bold?: boolean,
     italic?: boolean,
-    fontName?: string
+    fontName?: string,
+    fontClass?: FontClass
   ) => Promise<{ font: PDFFont; safe: string }>
 ): Promise<void> {
   const fontSize = item.fontSize;
@@ -246,7 +254,8 @@ async function drawTextItem(
             partText,
             segBold,
             segItalic,
-            item.font
+            item.font,
+            seg.fontClass ?? item.fontClass
           );
           const width = font.widthOfTextAtSize(safe, fontSize);
           lines[lines.length - 1].push({
@@ -285,7 +294,8 @@ async function drawTextItem(
       item.text,
       item.bold,
       item.italic,
-      item.font
+      item.font,
+      item.fontClass
     );
     const wrappedLines = wrapText(font, safe, boxW, fontSize);
     const lineStep = fontSize * lineHeight;

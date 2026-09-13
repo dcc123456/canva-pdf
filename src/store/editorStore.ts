@@ -10,8 +10,6 @@ export interface EditorState {
   tool: Tool;
   totalPages: number;
   selectedOverlayId: string | null;
-  /** 打开 PDF 时是否自动"全文格式化"(全部文本按项目字体重排)。 */
-  fullReformat: boolean;
   /** 左侧页面缩略图侧栏是否收起(Canva 式,默认收起)。 */
   sidebarCollapsed: boolean;
   /** 右侧属性面板是否收起(选中元素时自动展开)。 */
@@ -22,7 +20,6 @@ export interface EditorState {
   setTool: (tool: Tool) => void;
   setTotalPages: (n: number) => void;
   setSelectedOverlayId: (id: string | null) => void;
-  setFullReformat: (v: boolean) => void;
   setSidebarCollapsed: (v: boolean) => void;
   setInspectorCollapsed: (v: boolean) => void;
   nextPage: () => void;
@@ -31,17 +28,8 @@ export interface EditorState {
   zoomOut: () => void;
 }
 
-const FULL_REFORMAT_KEY = 'minipdf.fullReformat';
 const SIDEBAR_COLLAPSED_KEY = 'minipdf.sidebarCollapsed';
 const INSPECTOR_COLLAPSED_KEY = 'minipdf.inspectorCollapsed';
-
-function loadFullReformat(): boolean {
-  try {
-    return localStorage.getItem(FULL_REFORMAT_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
 
 function loadFlag(key: string, fallback: boolean): boolean {
   try {
@@ -53,28 +41,42 @@ function loadFlag(key: string, fallback: boolean): boolean {
   }
 }
 
-function findClosestZoom(target: number, base: readonly number[] = ZOOM_LEVELS): number {
-  let best: number = base[0];
-  let bestDiff = Math.abs(target - best);
-  for (const z of base) {
-    const d = Math.abs(target - z);
-    if (d < bestDiff) {
-      best = z;
-      bestDiff = d;
+/**
+ * 取相对当前缩放值的"上一档 / 下一档"。
+ *
+ * 不能用"就近吸附"实现(旧版本正是如此,是个 bug):`ZOOM_LEVELS` 档位
+ * 间距不均,1.0 与 1.5 的中点是 1.25,`closest(1.25)` 会并列命中 1.0
+ * (比较用严格小于,数组靠前的值胜出),于是 100% 及以上按"放大"毫无
+ * 反应 —— 而 100% 恰是默认值。1.5→1.75、2→2.25、4→4.25 同样并列。
+ *
+ * 改为"严格大于 / 小于当前值的最近档位",顺带也能正确处理非档位值
+ * (例如未来"适应宽度"算出的 1.17),不会跳档。
+ */
+function stepZoom(current: number, direction: 1 | -1): number {
+  const base = ZOOM_LEVELS;
+  const EPS = 1e-6;
+  if (direction === 1) {
+    for (const z of base) {
+      if (z > current + EPS) return z;
     }
+    return base[base.length - 1];
   }
-  return best;
+  for (let i = base.length - 1; i >= 0; i -= 1) {
+    if (base[i] < current - EPS) return base[i];
+  }
+  return base[0];
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
   currentPageIndex: 0,
   zoom: 1,
-  tool: 'edit-text',
+  tool: 'select',
   totalPages: 0,
   selectedOverlayId: null,
-  fullReformat: loadFullReformat(),
   sidebarCollapsed: loadFlag(SIDEBAR_COLLAPSED_KEY, true),
-  inspectorCollapsed: loadFlag(INSPECTOR_COLLAPSED_KEY, false),
+  // 默认收起:与 Canva 的"选中才出现属性 UI"一致。App.tsx 已有「选中元素时
+  // 自动展开 Inspector」的逻辑,原先默认展开会让那段逻辑成为空操作。
+  inspectorCollapsed: loadFlag(INSPECTOR_COLLAPSED_KEY, true),
 
   setCurrentPage: (index) =>
     set(() => ({
@@ -88,15 +90,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setTotalPages: (n) => set({ totalPages: Math.max(0, n) }),
 
   setSelectedOverlayId: (id) => set({ selectedOverlayId: id }),
-
-  setFullReformat: (v) => {
-    try {
-      localStorage.setItem(FULL_REFORMAT_KEY, v ? '1' : '0');
-    } catch {
-      /* 忽略存储失败(隐私模式等) */
-    }
-    set({ fullReformat: v });
-  },
 
   setSidebarCollapsed: (v) => {
     try {
@@ -127,14 +120,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   zoomIn: () => {
-    const current = get().zoom;
-    const next = findClosestZoom(current + 0.25);
-    set({ zoom: next });
+    set({ zoom: stepZoom(get().zoom, 1) });
   },
 
   zoomOut: () => {
-    const current = get().zoom;
-    const next = findClosestZoom(current - 0.25);
-    set({ zoom: next });
+    set({ zoom: stepZoom(get().zoom, -1) });
   },
 }));

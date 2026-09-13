@@ -17,13 +17,19 @@
 // This test is the regression net for the `Invalid UTF-8 leading byte
 // 0xa1` bug and the destruct-then-redraw flow.
 import { describe, it, expect, beforeAll } from 'vitest';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pdfiumEngine } from '../../src/core/pdfium/pdfiumEngine';
 import { loadPdfiumFromBytes } from '../../src/core/pdfium/loader';
 import { useEngineStore } from '../../src/store/engineStore';
 
-const RESUME = 'd:\\文档\\pdf\\resume.pdf';
+/**
+ * Path to a real-world resume PDF. Overridable so this suite is runnable on
+ * any machine instead of only on the author's Windows box.
+ *
+ *   MINIPDF_RESUME_PDF=/path/to/resume.pdf npm run test
+ */
+const RESUME = process.env.MINIPDF_RESUME_PDF ?? 'd:\\文档\\pdf\\resume.pdf';
 
 // The PDFium module exposes `FPDFText_SetText`/`FPDF_LoadMemDocument`
 // through Emscripten's dynamic-linking table; under Node + Vitest the
@@ -32,7 +38,22 @@ const RESUME = 'd:\\文档\\pdf\\resume.pdf';
 // the browser against the live dev server (`npm run dev`).
 const supportsPdfiumInNode = false;
 
-describe.skipIf(!supportsPdfiumInNode)('PDFium engine on user resume.pdf', () => {
+const fixtureExists = existsSync(RESUME);
+const shouldRun = supportsPdfiumInNode && fixtureExists;
+
+// Make the skip loud. A silent "1 skipped" in the report previously hid the
+// fact that this entire suite never ran on macOS/Linux.
+if (!shouldRun) {
+  const reason = !supportsPdfiumInNode
+    ? 'PDFium cannot initialise its indirect-function table under Node/Vitest'
+    : `fixture not found at ${RESUME}`;
+  console.warn(
+    `[resume.spec] SKIPPED — ${reason}.\n` +
+      `             Provide a PDF via MINIPDF_RESUME_PDF=<path> to run it locally.`
+  );
+}
+
+describe.skipIf(!shouldRun)('PDFium engine on user resume.pdf', () => {
   let pdfBytes: Uint8Array;
 
   beforeAll(async () => {

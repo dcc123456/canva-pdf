@@ -11,7 +11,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "typecheck": "tsc -b --force"
+    "typecheck": "tsc -b --force",
+    "fixtures": "node scripts/gen-fixtures.mjs && node scripts/verify-fixtures.mjs",
+    "fixtures:verify": "node scripts/verify-fixtures.mjs",
+    "experiment:redact": "node scripts/experiment-redact.mjs",
+    "experiment:subset": "node scripts/experiment-subset.mjs",
+    "redact:verify": "node scripts/verify-redacted-export.mjs"
   },
   "dependencies": {
     "@embedpdf/pdfium": "^2.14.4",

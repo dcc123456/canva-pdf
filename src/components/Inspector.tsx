@@ -12,7 +12,7 @@ import type {
   HighlightItem,
   ImageItem,
   OverlayItem,
-  StickyNoteItem,
+  RedactItem,
   TextAlign,
   TextBlockItem,
   TextItem,
@@ -51,9 +51,9 @@ function readCommon(item: OverlayItem): CommonBoxFields | null {
       const it = item as HighlightItem;
       return { x: it.rect.x, y: it.rect.y, w: it.rect.w, h: it.rect.h, rotation: 0 };
     }
-    case 'note': {
-      const it = item as StickyNoteItem;
-      return { x: it.position.x, y: it.position.y, w: it.size.w, h: it.size.h, rotation: 0 };
+    case 'redact': {
+      const it = item as RedactItem;
+      return { x: it.rect.x, y: it.rect.y, w: it.rect.w, h: it.rect.h, rotation: 0 };
     }
     case 'text': {
       const it = item as TextItem;
@@ -66,8 +66,7 @@ function readCommon(item: OverlayItem): CommonBoxFields | null {
     case 'drawing': {
       return null;
     }
-    case 'text-block':
-    case 'form-field': {
+    case 'text-block': {
       return { x: item.bbox.x, y: item.bbox.y, w: item.bbox.w, h: item.bbox.h, rotation: 0 };
     }
     default: {
@@ -83,12 +82,8 @@ function applyCommon(
 ): Partial<OverlayItem> {
   switch (item.type) {
     case 'highlight':
+    case 'redact':
       return { rect: { x: common.x, y: common.y, w: common.w, h: common.h } } as Partial<OverlayItem>;
-    case 'note':
-      return {
-        position: { x: common.x, y: common.y },
-        size: { w: common.w, h: common.h },
-      } as Partial<OverlayItem>;
     case 'text':
       return {
         position: { x: common.x, y: common.y },
@@ -102,7 +97,6 @@ function applyCommon(
         rotation: common.rotation,
       } as Partial<OverlayItem>;
     case 'text-block':
-    case 'form-field':
       return { bbox: { x: common.x, y: common.y, w: common.w, h: common.h } } as Partial<OverlayItem>;
     default:
       return {};
@@ -401,15 +395,15 @@ export function Inspector() {
           updateOverlay={updateOverlay}
         />
       )}
-      {item.type === 'note' && (
-        <NoteControls
-          item={item as StickyNoteItem}
-          updateOverlay={updateOverlay}
-        />
-      )}
       {item.type === 'highlight' && (
         <HighlightControls
           item={item as HighlightItem}
+          updateOverlay={updateOverlay}
+        />
+      )}
+      {item.type === 'redact' && (
+        <RedactControls
+          item={item as RedactItem}
           updateOverlay={updateOverlay}
         />
       )}
@@ -427,8 +421,8 @@ function typeLabel(item: OverlayItem): string {
   switch (item.type) {
     case 'highlight':
       return '高亮';
-    case 'note':
-      return '便签';
+    case 'redact':
+      return '涂黑 / 密文';
     case 'text':
       return '文字';
     case 'image':
@@ -437,8 +431,6 @@ function typeLabel(item: OverlayItem): string {
       return '画笔';
     case 'text-block':
       return '原文本块';
-    case 'form-field':
-      return '表单字段';
     default: {
       const _exhaustive: never = item;
       return _exhaustive;
@@ -526,40 +518,6 @@ function TextControls({
   );
 }
 
-// ---------- NoteControls -----------------------------------------------------
-
-function NoteControls({
-  item,
-  updateOverlay,
-}: {
-  item: StickyNoteItem;
-  updateOverlay: (id: string, patch: Partial<OverlayItem>) => void;
-}) {
-  return (
-    <div className="rounded border bg-white p-2">
-      <div className="mb-2 text-[11px] uppercase tracking-wide text-gray-400">便签</div>
-      <label className="flex flex-col gap-1 text-xs text-gray-600">
-        文字
-        <textarea
-          value={item.text}
-          onChange={(e) => updateOverlay(item.id, { text: e.target.value } as Partial<OverlayItem>)}
-          rows={3}
-          className={inputCls}
-        />
-      </label>
-      <label className="mt-2 flex items-center justify-between text-xs text-gray-600">
-        颜色
-        <input
-          type="color"
-          value={item.color}
-          onChange={(e) => updateOverlay(item.id, { color: e.target.value } as Partial<OverlayItem>)}
-          className="h-7 w-10 cursor-pointer border-0 bg-transparent p-0"
-        />
-      </label>
-    </div>
-  );
-}
-
 // ---------- HighlightControls ------------------------------------------------
 
 function HighlightControls({
@@ -590,6 +548,84 @@ function HighlightControls({
           step={0.05}
           value={item.opacity}
           onChange={(e) => updateOverlay(item.id, { opacity: Number(e.target.value) } as Partial<OverlayItem>)}
+        />
+      </label>
+    </div>
+  );
+}
+
+// ---------- RedactControls ---------------------------------------------------
+//
+// 涂黑 / 密文。与 HighlightControls 长得像,但语义完全不同:高亮只是画一层
+// 半透明色,原文仍在内容流里可复制;涂黑会在导出时把该矩形内的文字从内容
+// 流中字节级删除,并抹除覆盖区域的图片像素与矢量图元。
+//
+// 面板必须把"不可撤销"讲清楚 —— 这是本应用唯一的破坏性操作,用户误以为
+// 它像高亮一样可以反悔是很危险的。
+function RedactControls({
+  item,
+  updateOverlay,
+}: {
+  item: RedactItem;
+  updateOverlay: (id: string, patch: Partial<OverlayItem>) => void;
+}) {
+  return (
+    <div className="rounded border bg-white p-2">
+      <div className="mb-2 text-[11px] uppercase tracking-wide text-gray-400">
+        涂黑 / 密文
+      </div>
+
+      <div className="mb-2 rounded border border-amber-300 bg-amber-50 p-2 text-[11px] leading-relaxed text-amber-900">
+        导出时会把此框内的<strong>文字从内容流中删除</strong>,并抹除覆盖的图片
+        像素与矢量图元。与"高亮"不同,这<strong>无法通过再次导出还原</strong>
+        —— 请确认后再导出。
+      </div>
+
+      <label className="flex items-center justify-between text-xs text-gray-600">
+        遮盖色
+        <input
+          type="color"
+          value={item.color}
+          onChange={(e) =>
+            updateOverlay(item.id, { color: e.target.value } as Partial<OverlayItem>)
+          }
+          className="h-7 w-10 cursor-pointer border-0 bg-transparent p-0"
+        />
+      </label>
+
+      <div className="mt-2 flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() =>
+            updateOverlay(item.id, { color: '#000000' } as Partial<OverlayItem>)
+          }
+          className="rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
+          title="标准涂黑"
+        >
+          涂黑
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            updateOverlay(item.id, { color: '#ffffff' } as Partial<OverlayItem>)
+          }
+          className="rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
+          title="涂白(适合白底文档,视觉上更干净)"
+        >
+          涂白
+        </button>
+      </div>
+
+      <label className="mt-3 flex flex-col gap-1 text-xs text-gray-600">
+        备注(仅本地记录,不会写入 PDF)
+        <input
+          type="text"
+          value={item.label ?? ''}
+          placeholder="例如:客户姓名"
+          onChange={(e) =>
+            updateOverlay(item.id, { label: e.target.value } as Partial<OverlayItem>)
+          }
+          className={inputCls}
         />
       </label>
     </div>

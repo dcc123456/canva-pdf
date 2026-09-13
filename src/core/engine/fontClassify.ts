@@ -226,31 +226,33 @@ export const FONT_CLASS_TO_FONT_FILE: Record<FontClass, { regular: string; bold:
 };
 
 /**
- * FontClass -> pdf-lib 字体策略标识。导出端按此选择:
+ * FontClass -> pdf-lib 字体策略标识。导出端只读取 `kind` 判别式:
  *   - 'standard:<name>': 用 pdf-lib StandardFonts(Helvetica / Times / Courier)
- *   - 'cjk-file:<path>': 从 URL 加载 OTF 字节后用 fontkit 嵌入
+ *   - 'cjk-file': 走 fontkit 嵌入本地 OTF
+ *
+ * 注意:CJK 分支**不再**在此声明字体文件 URL。真实加载由
+ * `loadCjkFontBytesForVariant(fontClass, weight)`(`core/writer/cjkFont.ts`)
+ * 负责,它按 (fontClass, weight) 取 Regular 或 Bold 字重文件。旧版本这里
+ * 有一个只指向 Regular 的 `url` 字段,消费方从不读取,已删除以免误导。
  */
 export type PdfFontStrategy =
   | { kind: 'standard'; name: 'Helvetica' | 'Times-Roman' | 'Courier' }
-  | { kind: 'cjk-file'; url: string };
+  | { kind: 'cjk-file' };
 
 export const FONT_CLASS_TO_PDF_STRATEGY: Record<FontClass, PdfFontStrategy> = {
   sans: { kind: 'standard', name: 'Helvetica' },
   serif: { kind: 'standard', name: 'Times-Roman' },
   mono: { kind: 'standard', name: 'Courier' },
-  'cjk-sans': {
-    kind: 'cjk-file',
-    url: `${import.meta.env.BASE_URL}fonts/SourceHanSansCN-Regular.otf`,
-  },
-  'cjk-serif': {
-    kind: 'cjk-file',
-    url: `${import.meta.env.BASE_URL}fonts/SourceHanSerifCN-Regular.otf`,
-  },
+  'cjk-sans': { kind: 'cjk-file' },
+  'cjk-serif': { kind: 'cjk-file' },
 };
 
 /**
- * 给 pdf-lib 选 bold/italic 变体(StandardFonts 路径用)。
- * CJK 路径目前只有 Regular,粗斜体用 stroke/skew 模拟(后续可加 Bold/Serif 字重文件)。
+ * 给 pdf-lib 选 bold/italic 变体(仅 StandardFonts 路径用)。
+ *
+ * CJK 路径不走这里:`loadCjkFontBytesForVariant(fontClass, weight)` 会直接
+ * 取真 Bold 字重文件(SourceHanSansCN-Bold.otf 等),italic 由调用方用 CTM
+ * 斜切模拟(Source Han 无 italic 变体,是 CJK 排版惯例)。
  */
 export function pickStandardFontVariant(
   base: 'Helvetica' | 'Times-Roman' | 'Courier',

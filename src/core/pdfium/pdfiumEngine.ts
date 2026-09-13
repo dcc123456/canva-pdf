@@ -15,9 +15,6 @@
 //     then let the export pipeline (`features/export/exportPdf`) repaint
 //     the new text at the same baseline via pdf-lib with no white box.
 //
-//   • parseFormFields    – delegates to the unified pdfLibFallback parser
-//     so AcroForms keep working while we still get text editing.
-//
 // Boundaries:
 //   • The browser-build of @embedpdf/pdfium does NOT expose any
 //     `FPDFTextObj_SetText` / `FPDFPage_SetContent` API — in-place text
@@ -26,11 +23,8 @@
 import type {
   DetectTextBlocksOptions,
   EngineInterface,
-  FormField,
-  ParseFormFieldsOptions,
   TextBlock,
 } from '../engine/types';
-import { pdfLibFallbackEngine as pdfLibFallback } from '../engine/pdfLibFallback';
 import { asPdfium, free, malloc, mallocFromBytes, mallocFromString, readUtf16LE, type PdfiumLike } from './helpers';
 import { loadPdfium } from './loader';
 import { classifyFontWithFallback } from '../engine/fontClassify';
@@ -160,10 +154,6 @@ export const pdfiumEngine: EngineInterface = {
   async detectTextBlocks({ pdfBytes, pageIndex }: DetectTextBlocksOptions): Promise<TextBlock[]> {
     const mod = await loadPdfium();
     return detectTextBlocksImpl(asPdfium(mod), new Uint8Array(pdfBytes), pageIndex);
-  },
-
-  async parseFormFields({ pdfBytes }: ParseFormFieldsOptions): Promise<FormField[]> {
-    return pdfLibFallback.parseFormFields({ pdfBytes });
   },
 };
 

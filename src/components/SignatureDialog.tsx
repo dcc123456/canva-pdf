@@ -49,8 +49,9 @@ export function SignatureDialog({ open, onClose }: SignatureDialogProps) {
     c.style.width = `${CANVAS_W}px`;
     c.style.height = `${CANVAS_H}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    // 透明底色:签名保存为带 alpha 的 PNG,叠加到 PDF 上时不会盖住原内容。
+    // (旧实现填白,导出后是一个白色矩形盖在正文上。)
+    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
     setHasInk(false);
   }, [open]);
 
@@ -107,8 +108,7 @@ export function SignatureDialog({ open, onClose }: SignatureDialogProps) {
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
     setHasInk(false);
   }
 
@@ -162,7 +162,10 @@ export function SignatureDialog({ open, onClose }: SignatureDialogProps) {
             ✕
           </button>
         </div>
-        <p className="mb-2 text-xs text-gray-500">在下方区域中绘制你的签名,然后点击保存。</p>
+        <p className="mb-2 text-xs text-gray-500">
+          在下方区域中绘制你的签名,然后点击保存。背景为透明(棋盘格仅作提示),
+          叠加到 PDF 上不会遮盖原有内容。
+        </p>
         <div className="flex justify-center">
           <canvas
             ref={canvasRef}
@@ -170,8 +173,21 @@ export function SignatureDialog({ open, onClose }: SignatureDialogProps) {
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
-            className="rounded border bg-white"
-            style={{ width: CANVAS_W, height: CANVAS_H, touchAction: 'none' }}
+            className="rounded border"
+            style={{
+              width: CANVAS_W,
+              height: CANVAS_H,
+              touchAction: 'none',
+              // 棋盘格:直观表明画布是透明底,而非白底。
+              backgroundColor: '#ffffff',
+              backgroundImage:
+                'linear-gradient(45deg, #e5e7eb 25%, transparent 25%), ' +
+                'linear-gradient(-45deg, #e5e7eb 25%, transparent 25%), ' +
+                'linear-gradient(45deg, transparent 75%, #e5e7eb 75%), ' +
+                'linear-gradient(-45deg, transparent 75%, #e5e7eb 75%)',
+              backgroundSize: '16px 16px',
+              backgroundPosition: '0 0, 0 8px, 8px -8px, -8px 0',
+            }}
           />
         </div>
         <div className="mt-3 flex justify-end gap-2">

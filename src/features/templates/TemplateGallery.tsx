@@ -5,19 +5,25 @@
 //      `BUILTIN_TEMPLATES`).
 //   2. User templates (from `loadUserTemplates`, persisted in localStorage).
 //
-// Each card shows a thumbnail (placeholder first-letter for built-ins, the
-// rendered first-page PNG for user templates), the template name, and an
-// Apply button. User-template cards also expose a right-click context menu
-// for deletion.
+// Each card shows a cover: for built-ins we render page 1 of the generated
+// PDF with pdfjs on first open (and cache it for the session); for user
+// templates we use the PNG stored alongside the template. If a cover cannot
+// be produced we fall back to a first-letter placeholder.
 import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { v4 as uuidv4 } from 'uuid';
-import { BUILTIN_TEMPLATES, applyBuiltinTemplate, getBuiltinTemplate } from '../../core/templates/registry';
+import {
+  BUILTIN_TEMPLATES,
+  applyBuiltinTemplate,
+  generateBuiltinPdf,
+  getBuiltinTemplate,
+} from '../../core/templates/registry';
 import {
   addUserTemplate,
   loadUserTemplates,
   removeUserTemplate,
 } from '../../core/templates/user';
+import { renderPdfThumbnail } from '../../core/templates/thumbnail';
 import { fromBase64 } from '../../core/project/serialize';
 import { loadDocument } from '../../core/pdf/loader';
 import { useDocumentStore } from '../../store/documentStore';
@@ -40,11 +46,49 @@ function thumbnailLabel(name: string): string {
   return '?';
 }
 
+/**
+ * 内置模板的封面缓存。内置模板的 PDF 由 pdf-lib 确定性生成,同一份
+ * session 里内容不会变,所以每个模板只渲染一次。
+ */
+const builtinCoverCache = new Map<string, string>();
+
+/** 打开模板库时,按需为还没有封面的内置模板渲染封面。 */
+function useBuiltinCovers(open: boolean): Record<string, string> {
+  const [covers, setCovers] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    for (const [id, url] of builtinCoverCache) initial[id] = url;
+    return initial;
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void (async () => {
+      for (const tpl of BUILTIN_TEMPLATES) {
+        if (builtinCoverCache.has(tpl.id)) continue;
+        const bytes = await generateBuiltinPdf(tpl.id);
+        const url = await renderPdfThumbnail(bytes);
+        if (cancelled) return;
+        if (url) {
+          builtinCoverCache.set(tpl.id, url);
+          setCovers((prev) => ({ ...prev, [tpl.id]: url }));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  return covers;
+}
+
 export function TemplateGallery({ open, onClose, onApplied }: TemplateGalleryProps) {
   const [userTemplates, setUserTemplates] = useState<Template[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const builtinCovers = useBuiltinCovers(open);
 
   // Refresh user templates when the gallery opens.
   useEffect(() => {
@@ -208,6 +252,7 @@ export function TemplateGallery({ open, onClose, onApplied }: TemplateGalleryPro
                   key={tpl.id}
                   title={tpl.name}
                   thumbnailText={thumbnailLabel(tpl.name)}
+                  thumbnailSrc={builtinCovers[tpl.id]}
                   busy={busyId === tpl.id}
                   onApply={() => handleApply(tpl.id)}
                   variant="builtin"

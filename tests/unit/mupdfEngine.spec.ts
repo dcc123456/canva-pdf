@@ -14,8 +14,11 @@ describe('mupdfEngine', () => {
     expect(mupdfEngine.kind).toBe('mupdf');
   });
 
-  it('exposes the two EngineInterface methods (detect/parse)', () => {
+  it('exposes the EngineInterface detect method', () => {
     expect(typeof mupdfEngine.detectTextBlocks).toBe('function');
-    expect(typeof mupdfEngine.parseFormFields).toBe('function');
+  });
+
+  it('no longer exposes parseFormFields (form feature removed)', () => {
+    expect('parseFormFields' in mupdfEngine).toBe(false);
   });
 });

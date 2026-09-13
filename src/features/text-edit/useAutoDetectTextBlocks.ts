@@ -1,9 +1,9 @@
 // features/text-edit/useAutoDetectTextBlocks.ts
 //
-// Auto-runs text-block detection when the `edit-text` tool is active and the
-// current page has no text-block overlays yet. This makes edit mode work out
-// of the box (default tool) without requiring the user to click the tool
-// button to "prime" detection.
+// Auto-runs text-block detection when the `select` tool is active and the
+// current page has no text-block overlays yet. Text editing is entered by
+// double-clicking a block under `select`, so the blocks must exist before the
+// user can edit them.
 //
 // Skips pages that already have text-block overlays (e.g. loaded from a saved
 // project) so existing edits are never wiped.
@@ -40,7 +40,7 @@ export function useAutoDetectTextBlocks(): void {
   const currentPageId = pages[currentPageIndex]?.id;
 
   useEffect(() => {
-    if (tool !== 'edit-text') return;
+    if (tool !== 'select') return;
     if (!pdfBytes || !currentPageId) return;
     // Don't re-detect a page we already processed in this session.
     if (detectedPagesRef.current.has(currentPageId)) return;
@@ -58,7 +58,7 @@ export function useAutoDetectTextBlocks(): void {
 
     detectedPagesRef.current.add(currentPageId);
     // 检测失败时取消标记,下次回到该页自动重试(比如引擎首次加载失败)。
-    void runEngineDetection('edit-text').then((ok) => {
+    void runEngineDetection().then((ok) => {
       if (!ok) detectedPagesRef.current.delete(currentPageId);
     });
   }, [tool, pdfBytes, currentPageId, overlays, detectionVisible]);

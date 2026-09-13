@@ -31,3 +31,10 @@ secrets/
 
 # 用户本地测试/个人 PDF,不提交(模板 PDF 在 public/templates,不受影响)
 /*.pdf
+
+# 验证样例素材(见 docs/validation-plan.md §2)。由 scripts/gen-fixtures.mjs
+# 生成、scripts/verify-fixtures.mjs 校验,不提交 —— S6 按设计超过 5 MB。
+fixtures/
+
+# WorkBuddy AI 私有记忆(非项目代码,不提交)
+.workbuddy-ai/

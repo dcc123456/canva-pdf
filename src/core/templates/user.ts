@@ -10,7 +10,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { Template } from '../types';
 import { toBase64, fromBase64 } from '../project/serialize';
-import { loadDocument } from '../pdf/loader';
+import { renderPdfThumbnail } from './thumbnail';
 
 const STORAGE_KEY = 'canva.userTemplates';
 
@@ -71,37 +71,6 @@ export function saveUserTemplates(templates: Template[]): void {
   safeWrite(templates);
 }
 
-/**
- * Render the first page of `pdfBytes` to a 200x280 PNG data URL using
- * pdfjs. Returns an empty string if rendering fails; callers should still
- * persist the template in that case so the user can re-open it later.
- */
-async function generateThumbnailDataUrl(
-  pdfBytes: Uint8Array
-): Promise<string> {
-  try {
-    const doc = await loadDocument(pdfBytes);
-    if (doc.numPages < 1) return '';
-    const page = await doc.getPage(1);
-    const viewport = page.getViewport({ scale: 1 });
-    const targetW = 200;
-    const targetH = 280;
-    const scale = Math.min(targetW / viewport.width, targetH / viewport.height);
-    const scaled = page.getViewport({ scale });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.floor(scaled.width));
-    canvas.height = Math.max(1, Math.floor(scaled.height));
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return '';
-    await page.render({ canvas, canvasContext: ctx, viewport: scaled }).promise;
-    page.cleanup();
-    return canvas.toDataURL('image/png');
-  } catch (err) {
-    console.warn('[userTemplates] thumbnail generation failed:', err);
-    return '';
-  }
-}
-
 export interface AddUserTemplateOptions {
   /** Skip thumbnail generation (faster, used by tests). */
   skipThumbnail?: boolean;
@@ -111,6 +80,12 @@ export interface AddUserTemplateOptions {
  * Build a new user template record from raw PDF bytes, persist it, and
  * return the resulting record. The thumbnail is generated asynchronously
  * by rendering page 1 with pdfjs.
+ *
+ * 注意:`pdfBytes` 在生成封面后仍会被 `toBase64` 读取,所以封面渲染不能
+ * 消耗掉它。`renderPdfThumbnail` 内部走 `loadDocument`,而后者会给 pdfjs
+ * 一份私有副本 —— 这正是曾经导致 "Cannot perform Construct on a detached
+ * or out-of-bounds ArrayBuffer" 的根因(旧实现把同一个 buffer 交给 pdfjs,
+ * 被 transfer 后再去 base64 编码)。
  */
 export async function addUserTemplate(
   name: string,
@@ -119,7 +94,7 @@ export async function addUserTemplate(
 ): Promise<Template> {
   const thumbnail = options.skipThumbnail
     ? ''
-    : await generateThumbnailDataUrl(pdfBytes);
+    : await renderPdfThumbnail(pdfBytes);
   const tpl: Template = {
     id: uuidv4(),
     name,

@@ -10,17 +10,50 @@
 | # | 中文 | English |
 |---|------|---------|
 | F1 | PDF 查看器 (缩略图 / 翻页 / 缩放 / 快捷键) | PDF viewer (thumbnails / paging / zoom / shortcuts) |
-| F2 | 文本注释 (高亮 / 便签) | Text annotations (highlight / sticky note) |
+| F2 | 文本注释 (高亮) | Text annotations (highlight) |
 | F3 | 文本叠加 (字体 / 颜色 / 粗斜下划删除线 / 富文本段) | Text overlay (font / color / bold / italic / underline / strike / rich-text segments) |
 | F4 | 图片叠加 (PNG / JPG / WebP,拖动 / 缩放 / 旋转) | Image overlay (PNG / JPG / WebP, drag / resize / rotate) |
 | F5 | 页面管理 (新增 / 删除 / 重排 / 旋转) | Page management (add / delete / reorder / rotate) |
-| F6 | 画笔与签名 (自由绘制 + 签名模态框) | Free draw + signature pad |
+| F6 | 画笔与签名 (自由绘制 + 透明底色签名模态框) | Free draw + transparent-background signature pad |
 | F7 | 导出 PDF (矢量保留 + 字符级覆盖管线) | Export PDF (vector-preserving + char-level overlay pipeline) |
 | F8 | 项目存档 (`.minipdf.json` 格式) | Project save (`.minipdf.json` format) |
 | F9 | 撤销 / 重做 (Immer patches) | Undo / Redo (Immer patches) |
-| F10 | 真实文本编辑 (三引擎路由 + TipTap 富文本 + 按段落分割) | Real text edit (3-engine router + TipTap rich text + paragraph segmentation) |
-| F11 | AcroForm 表单 (文本 / 复选 / 单选 / 下拉) | AcroForm (text / checkbox / radio / select) |
-| F12 | 模板库 (5 个内置 + 用户模板 localStorage) | Template library (5 built-ins + user templates in localStorage) |
+| F10 | 真实文本编辑 (三引擎路由 + TipTap 富文本;「选择」下双击进入) | Real text edit (3-engine router + TipTap; double-click under Select) |
+| F12 | 模板库 (5 个内置 + 用户模板 localStorage,含真实封面) | Template library (5 built-ins + user templates, with real covers) |
+| F13 | 涂黑 / 密文 (字节级真脱敏:删字 + 抹图片像素 + 移除矢量) | Redaction (true byte-level: text removed + image pixels erased + vector art removed) |
+
+### 已移除的能力 / Removed Features
+
+以下功能在「按任务收敛」的重构中被**整体移除**,不只是隐藏入口:
+
+| 能力 | 移除原因 | 迁移路径 |
+|---|---|---|
+| 便签 (sticky note) | 与「文字」叠加层能力重叠,且导出后不可再编辑 | 用「文字」工具;需要贴纸效果可用「高亮」 |
+| 表单 (AcroForm 读取 / 写入) | 只做了"读原字段 + 导出重建",无法新建字段树;半成品比没有更容易误导 | 无(如需填写表单,请在专业 PDF 工具中处理) |
+| 「编辑文字」独立工具 | 与「选择」语义重叠(验证计划 A8/B9 记录的正是这个歧义) | 在「选择」下**双击**文本块即可改字 |
+| 「打开项目」按钮 | 与「打开 PDF」并列时极易混淆 | 「打开 PDF」+「保存」(`.minipdf.json`) |
+
+「全文格式化」不再是 TopBar 上的常驻开关 —— 它是针对**单份文档**的一次性决定,改为打开 PDF 时弹窗询问(见 `src/components/ReformatPromptDialog.tsx`)。
+
+### F13 能力详情 / Redaction Details
+
+「涂黑」与「高亮」是**两种不同的东西**,README 特意把它们分开写:
+
+- **高亮** 只是画一层半透明色块。原文仍在 PDF 内容流里,可以复制、可以提取。
+- **涂黑** 在导出时把该矩形内的内容**从内容流中真正删除**,导出后不可恢复。
+
+实现(`core/writer/redact.ts` 的 `'full'` 模式):
+
+| MuPDF 参数 | 取值 | 效果 |
+|---|---|---|
+| `black_boxes` | `false` | 黑框由 `flatten.ts` 用用户画的矩形绘制,保证"看到的框"与"被删的范围"一致,并支持自定义颜色(涂白) |
+| `image_method` | `REDACT_IMAGE_PIXELS` (2) | 只抹除被覆盖的像素,图片其余部分保留 —— 扫描件靠这个才能局部遮盖 |
+| `line_art_method` | `REDACT_LINE_ART_REMOVE_IF_TOUCHED` (2) | 被触及的矢量图元一并移除(宁可多删) |
+| `text_method` | `REDACT_TEXT_REMOVE` (0) | 从内容流删除文字 |
+
+**为什么不用现成的文本编辑路径**:文本编辑调用的是 `applyRedactions(false, 0, 0, 0)`,即"只删字、图片与矢量原样保留"。实测(见 `scripts/experiment-redact.mjs`)该参数下被覆盖的图片像素 **1400 → 1400 px 全部存活**、矢量 **381 → 381 px 存活**。直接复用它做涂黑工具会产出**假脱敏**:黑框画上了、文字也删了,但框下的图片与矢量仍在文件里。
+
+**安全约束**:涂黑 overlay 存在时,redaction 失败会**直接抛错中止导出**,不走"白底兜底"降级。宁可导出失败,也不能交付一份"看起来已脱敏、实际仍可提取原文"的文件。
 
 ### F10 能力详情 / Real Text Edit Details
 
@@ -54,10 +87,46 @@
 
 ## 截图 / Screenshots
 
-> TODO: 截图占位 (待添加) / Placeholder screenshots (TODO)
-> 
-> <!-- screenshot: Canva-style partitioned layout -->
-> <!-- screenshot: TopBar + ToolSidebar + Sidebar + Viewer + Inspector + BottomBar -->
+**工具栏按任务分组(R3)** — 「编辑 / 注释 / 插入」三组 + 每个按钮带可见文字标签,解决 A8/B9 的图标歧义;涂黑工具激活时内联提示不可撤销。
+
+![工具栏分组](docs/screenshots/toolbar-groups.png)
+
+**涂黑 / 密文(F13)** — 在扫描件(无文字层)上拖拽框选,导出时该区域内容被真正抹除;右侧 Inspector 显示遮盖色与警示。
+
+![涂黑工具](docs/screenshots/redact-tool.png)
+
+**工具栏收敛后的完整布局** — 「编辑」组只剩「选择」;`E`/`F`/`N` 三个工具与 TopBar 的「打开项目」按钮已移除。
+
+![工具栏收敛](docs/screenshots/toolbar-regrouped.png)
+
+**模板封面(F12)** — 内置模板的封面在打开模板库时用 pdfjs 渲染第一页并缓存,不再是首字母占位。
+
+![模板封面](docs/screenshots/template-covers.png)
+
+**打开 PDF 时的全文格式化确认** — 从常驻开关改为一次性弹窗,并写明代价与"不会记住"。
+
+![全文格式化确认](docs/screenshots/reformat-prompt.png)
+
+**全文格式化是非破坏性的** — 「全文格式化」只检测全部文本并写入可编辑 overlay,**原始 PDF 字节不动**,Viewer 继续显示原文档(外观零改变),双击任意文字块即可编辑;只有被改过的块在导出时才按项目字体重画,未改动的块保持原 PDF 外观。早期的破坏性实现(整份按项目字体重排)对任意版式都会"乱码 + 格式乱",已废弃(见 `src/features/text-edit/reformatDocument.ts`)。
+
+![全文格式化后原样保留](docs/screenshots/reformat-nondestructive.png)
+
+**选择 工具的拖动 + 智能对齐线** — 「选择」下整块可拖移,移动时显示红色对齐参考线:与页面边缘 / 中心 / 其它块的左·中·右(上·中·下)在 6 px 内即吸附并高亮一条贯穿全页的参考线。text-block 的命中区就是它自己的 bbox(全文格式化后的小块也能轻松抓取),非 text-block 的命中区在 SelectionFrame 中外扩 7 px,便于抓取小元素(见 `src/features/overlays/alignment.ts` 共享吸附计算)。
+
+![选择移动 + 对齐线](docs/screenshots/select-move-with-guides.png)
+
+**选择 工具缩放手柄** — 「选择」下选中文本块后,块四角出现白色圆点手柄、四边出现白色胶囊手柄,拖动即可缩放(角手柄等比、边手柄单侧拉伸);缩放时按同样的对齐参考线逻辑(`computeEdgeSnap`)吸附页面边缘 / 中心 / 其它块的对应边,并画出贯穿全页的红色参考线。缩放手柄与拖动都位于 HTML 的 `TextBlockEditLayer`(它盖在 SVG `SelectionFrame` 之上),所以 SVG 的旧手柄对文本块已不可达 —— 缩放在此层完整重写。块高度变化时其下方同页、横向重叠的文本块会整体下移(`pushDownSubsequentBlocks`),避免重叠。
+
+![选择缩放手柄](docs/screenshots/select-resize-handles.png)
+
+**导出反馈更明确** — 「导出 PDF」成功后,toast 与状态栏都明确写出 `文件名 · 可读体积`(如 `xxx-edited.pdf · 1.02 MB`,`toast` 寿命 6 s),而不是泛泛的"PDF 已导出";同时把 `URL.revokeObjectURL` 从 0 ms 推迟到 1 s(见 `src/utils/download.ts`),避免与浏览器下载管理器读取 blob 的过程赛跑导致静默取消下载。
+
+**签名透明底色(F6)** — 画布用棋盘格提示透明,保存为带 alpha 的 PNG;叠加到 PDF 上不遮盖原有内容。
+
+![签名透明底色](docs/screenshots/signature-transparent.png)
+
+> 其余占位待补 / Remaining placeholders (TODO):
+> <!-- screenshot: TopBar + Toolbar + Sidebar + Viewer + Inspector + BottomBar -->
 > <!-- screenshot: text-block edit with TipTap floating toolbar -->
 > <!-- screenshot: multi-theme color switcher -->
 > <!-- screenshot: dark mode -->
@@ -84,6 +153,10 @@ npm run lint
 npm run test
 npm run test:watch
 npm run test:ui
+
+# 生成 + 校验验证样例素材 (S1–S6) / generate & verify validation fixtures
+npm run fixtures
+npm run fixtures:verify
 ```
 
 默认端口 / Default port: `5173`(可在 `vite.config.ts` 中修改)。
@@ -100,6 +173,8 @@ npm run test:ui
 | `npm run test` | Vitest 单次运行 |
 | `npm run test:watch` | Vitest 监听模式 |
 | `npm run test:ui` | Vitest 可视化界面 |
+| `npm run fixtures` | 生成 + 校验验证样例素材 S1–S6 |
+| `npm run fixtures:verify` | 仅校验 `fixtures/` 下现有素材 |
 
 ## 快捷键 / Shortcuts
 
@@ -110,14 +185,23 @@ npm run test:ui
 | 键 / Key | 中文 | English |
 |----------|------|---------|
 | V | 选择 | Select |
-| E | 编辑文字 | Edit text |
-| F | 表单 | Form |
 | H | 高亮 | Highlight |
-| N | 便签 | Note |
+| R | 涂黑 / 密文 | Redact |
 | T | 文字 | Text |
 | I | 图片 | Image |
 | D | 画笔 | Draw |
 | S | 签名 | Signature |
+
+> `E`(编辑文字)/ `F`(表单)/ `N`(便签)已随对应功能一并移除,按键现在**无响应**,
+> 而不是静默切到一个不存在的工具。
+
+### 文本编辑 / Text editing
+
+| 键 / Key | 动作 / Action |
+|----------|---------------|
+| 双击文本块 | 进入内联编辑(需先切到「选择」) / Edit block inline (under Select) |
+| `Ctrl` / `Cmd` + `Enter` | 提交编辑 / Commit edit |
+| `Esc` | 取消编辑 / Cancel edit |
 
 ### 翻页 / Paging
 
@@ -142,17 +226,11 @@ npm run test:ui
 | `Ctrl` / `Cmd` + `Shift` + `Z` | 重做 / Redo |
 | `Ctrl` + `Y` | 重做 (备选) / Redo (alt) |
 
-### 表单 / Form
-
-| 键 / Key | 动作 / Action |
-|----------|---------------|
-| Click | 聚焦字段 / Focus field |
-| `Tab` | 下一字段 / Next field |
-
 ### 其他 / Misc
 
 | 键 / Key | 动作 / Action |
 |----------|---------------|
+| `Ctrl` / `Cmd` + `S` | 保存项目 / Save project |
 | `Delete` / `Backspace` | 删除选中 / Delete selected overlay |
 | `Esc` | 取消选中 / Clear selection |
 | `?` | 打开快捷键面板 / Open shortcuts panel |
@@ -162,39 +240,47 @@ npm run test:ui
 ```
 .
 ├── public/
-│   └── templates/        # 旧版示例 PDF (供 StartPage 备用)
+│   ├── fonts/            # 思源黑/宋 CN Regular+Bold 共 4 个 OTF (~41 MB)
+│   ├── templates/        # 旧版示例 PDF (供 StartPage 备用)
+│   └── pdfium.wasm
+├── fixtures/             # 验证样例素材 (S1–S6, gitignored,由脚本生成)
 ├── scripts/
-│   └── gen-templates.mjs
+│   ├── gen-templates.mjs     # 生成 public/templates 下的占位 PDF
+│   ├── gen-fixtures.mjs      # 生成验证样例 S1–S6
+│   ├── verify-fixtures.mjs   # 校验 S1–S6 是否真的可测 (20 项断言)
+│   └── experiment-subset.mjs # CJK 字体子集化安全性实验
+├── docs/
+│   ├── adr/              # 架构决策记录 0001–0004
+│   ├── validation-plan.md
+│   └── optimization-plan.md
 ├── src/
 │   ├── app/              # 应用引导 (预留)
 │   ├── assets/           # 静态资源
-│   ├── components/       # 通用组件 (TopBar / ToolSidebar / BottomBar / Inspector /
-│   │                     #   Toolbar / FloatingTextToolbar / SignatureDialog /
-│   │                     #   EmptyState / ErrorBoundary / Toaster / ShortcutsModal /
-│   │                     #   LoadingOverlay)
+│   ├── components/       # 通用组件 (TopBar / Toolbar / BottomBar / Inspector /
+│   │                     #   SignatureDialog / ReformatPromptDialog / EmptyState /
+│   │                     #   ErrorBoundary / Toaster / ShortcutsModal / LoadingOverlay)
 │   ├── core/             # 核心引擎
 │   │   ├── pdf/          # pdfjs 渲染 (loader / renderer / textColor)
 │   │   ├── writer/       # pdf-lib 写入 (flatten / pages / text-overlay /
-│   │   │                 #   textBlockEdits / textQuad / redact / cjkFont /
-│   │   │                 #   fontExtract (已删除) / formFields / helpers)
+│   │   │                 #   textBlockEdits / textQuad / redact / cjkFont / helpers)
 │   │   ├── mupdf/        # MuPDF.js 封装 (loader / mupdfEngine - 真删字 redact)
 │   │   ├── pdfium/       # PDFium 封装 (loader / pdfiumEngine - 备用引擎)
 │   │   ├── engine/       # 引擎路由 (router / types / pdfLibFallback /
 │   │   │                 #   fontClassify - 字体名 -> fontClass 映射)
-│   │   ├── project/      # 序列化 (serialize / deserialize)
-│   │   ├── templates/    # 模板库 (registry / builtin / user / user-templates / thumbnail)
+│   │   ├── project/      # 序列化 (serialize)
+│   │   ├── templates/    # 模板库 (registry - 5 个内置 / user - localStorage 用户模板 /
+│   │   │                 #   thumbnail - 封面渲染,内置模板封面按需生成)
 │   │   └── types.ts
 │   ├── features/         # 功能模块
 │   │   ├── viewer/       # F1 (Viewer / Sidebar / CanvasInteractionLayer)
 │   │   ├── overlays/     # 通用叠加层 (OverlayLayer / SelectionFrame / ElementRenderer)
 │   │   ├── text-edit/    # F10 (RichTextEditor / TextBlockEditLayer / detectTextBlocks /
 │   │   │                 #   useAutoDetectTextBlocks / useCommitTextBlock / reflow / runEngineDetection)
-│   │   ├── forms/        # F11 (FormFieldOverlay / detectFormFields)
 │   │   ├── export/       # F7 (exportPdf)
 │   │   ├── templates/    # F12 (TemplateGallery)
-│   │   └── project-io/   # F8 (loadProject / saveProject)
+│   │   └── project-io/   # F8 (saveProject)
 │   ├── hooks/            # React hooks (useKeyboardShortcuts / useEngineLoad)
-│   ├── store/            # Zustand stores (document / editor / engine / history / pen / template)
+│   ├── store/            # Zustand stores (document / editor / engine / history / pen)
 │   ├── utils/            # 工具函数 (coordinates / download / toast / theme / serialize)
 │   ├── App.tsx
 │   ├── main.tsx
@@ -202,7 +288,8 @@ npm run test:ui
 ├── tests/
 │   ├── unit/             # 单元测试 (coords / serialize / history / export-pages /
 │   │                     #   detectTextBlocks / registry / toast / engineStore /
-│   │                     #   mupdfEngine / pdfiumEngine / readUtf16LE)
+│   │                     #   mupdfEngine / pdfiumEngine / readUtf16LE / zoom /
+│   │                     #   flatten-font / subset-embed / shortcuts)
 │   ├── integration/      # 集成测试 (store-flow / pdfbytes / resume)
 │   └── setup.ts          # Vitest 全局 setup (pdfjs legacy build)
 ├── vitest.config.ts
@@ -253,13 +340,14 @@ npm run test:ui
 **核心设计原则**:
 
 - **PDF 渲染** 走 pdfjs(直接 canvas)。
-- **PDF 编辑**(文本块覆盖、AcroForm 写入、矢量保留)走引擎路由自动选择。
+- **PDF 编辑**(文本块覆盖、矢量保留)走引擎路由自动选择。
 - **编辑只改 overlay** 文本块编辑时不直接回写 pdfBytes,导出时统一通过 `core/writer/textBlockEdits.ts` 应用(字符级白底 + 重画),原 PDF 矢量元素全部保留。
 - **撤销/重做** 基于 Immer patches,所有 `documentStore` mutation 都通过 `applyWithHistory` 包装。
-- **叠加 (Overlay)** 始终存储为独立对象(高亮/便签/文字/图片/画笔/文本块/表单),导出时通过 `flatten.ts` 转换为 pdf-lib draw 命令。
-- **模板** 内置模板在 `core/templates/registry.ts` 中以 pdf-lib 内存生成;用户模板存于 `localStorage['canva.userTemplates']`。
+- **叠加 (Overlay)** 始终存储为独立对象(高亮/涂黑/文字/图片/画笔/文本块),导出时通过 `flatten.ts` 转换为 pdf-lib draw 命令。**唯一例外是涂黑**:它除了画框,还会在 flatten 之前触发 MuPDF 字节级删除(见 F13)。
+- **`loadDocument` 永远给 pdfjs 一份私有副本**。pdfjs 会 transfer(detach)传入的 ArrayBuffer,而调用方在它返回后仍要继续使用同一份字节(存进 store、base64 编码成模板)。早期把调用方的 buffer 直接透传,导致模板流程抛 `Cannot perform Construct on a detached or out-of-bounds ArrayBuffer`(见 `tests/unit/loader-buffer.spec.ts`)。
+- **模板** 内置模板在 `core/templates/registry.ts` 中以 pdf-lib 内存生成;用户模板存于 `localStorage['canva.userTemplates']`;封面由 `core/templates/thumbnail.ts` 渲染,内置模板封面在打开模板库时按需生成并缓存。
 - **错误隔离** 顶层 `<ErrorBoundary>` 捕获渲染错误;`<Toaster>` 集中显示成功/失败提示。
-- **Canva 风格布局** 分区式 UI:`TopBar` / `[ToolSidebar | Sidebar | Viewer | Inspector]` / `BottomBar`,可整体切换多主题色 + 暗色模式。
+- **Canva 风格布局** 分区式 UI:`TopBar` / `Toolbar` / `[Sidebar | Viewer | Inspector]` / `BottomBar`,可整体切换多主题色 + 暗色模式。
 
 ## 决策日志 / Decision Log
 
@@ -283,7 +371,8 @@ npm run test:ui
    `core/writer/textQuad.ts` 通过 pdfjs `getTextContent()` 的 `transform` 矩阵反推每个字符的四个角点,用于精确白底覆盖。比按行 bbox 覆盖更精确,不会盖到相邻文字。
 
 7. **CJK 字体子集化**  
-   `@pdf-lib/fontkit` + `core/writer/cjkFont.ts` 在导出时嵌入中文字体子集(只包含实际使用的字形),避免 PDF 体积爆炸。子集化后的 PDF 文字仍可复制可搜索。
+   `@pdf-lib/fontkit` + `core/writer/cjkFont.ts` 在导出时嵌入中文字体子集(只包含实际使用的字形),避免 PDF 体积爆炸。子集化后的 PDF 文字仍可复制可搜索。  
+   *实测佐证*:`scripts/experiment-subset.mjs` 用 200 个汉字验证 —— 子集内字形轮廓数恰为 201(200 字 + `.notdef`),pdfjs 提取文字逐字符全等、无零宽度字形;体积 **68.5 KB vs 整字体嵌入 7,289 KB(106x)**。此前 `textBlockEdits.ts` / `flatten.ts` 一度使用 `subset: false` 并注释"子集可能丢字形",该判断已被该实验证伪。
 
 8. **撤销/重做基于 Immer patches 而非深拷贝**  
    patches 体积小、可序列化(可后续支持云端协作),且 Immer patches 与 zustand 配合简单。代价:不能撤销跨 store 的副作用(目前也用不到)。
@@ -306,20 +395,27 @@ npm run test:ui
 14. **CJK italic 模拟**  
     Source Han Sans/Serif CN 作为 CJK 字体,设计上没有 italic 变体(CJK 排版传统里没有斜体概念)。Bold 用真字重文件,italic 用 `page.pushOperators` 设置 CTM 斜切矩阵(`1 0 0.21 1 -0.21*y 0 cm`)模拟,与浏览器 CSS `font-synthesis: oblique` 行为一致。
 
+15. **涂黑与文本编辑共用引擎但参数分离(`text-only` vs `full`)**  
+    文本编辑需要"只删字、别动图片和矢量",而涂黑需要"连图片像素和矢量一起抹掉"。二者共用 `applyMupdfRedactions`,但 `RedactEdit` 带 `mode` 字段,按 `(页, 模式)` 分组后每组单独建注释、单独调用 `applyRedactions`。  
+    *实测佐证*:`scripts/experiment-redact.mjs` 用对照组证明 `(false, 0, 0, 0)` 下被覆盖的图片像素 **1400 → 1400 px 全部存活**、矢量 **381 → 381 px 存活**;`(false, 2, 2, 0)` 下图片 1400 → 0、矢量 381 → 0,且未被覆盖的图片半边 1400 → 1400 完好。mixed 用例进一步验证 MuPDF 会逐注释遵守各自参数(无涂黑框的矢量 381 → 381 未被误删)。  
+    *为什么必须区分*:若复用文本编辑的参数做涂黑,产出的是**假脱敏** —— 黑框与删字都生效,但框下图片/矢量仍在文件里。因此导出管线还有一条硬约束:涂黑 overlay 存在时 redaction 失败即抛错中止,不走白底兜底降级。
+
 15. **分页检测 + 后台重画流水线 ([ADR 0004](docs/adr/0004-paginated-detection-redraw-pipeline.md))** *(规划中)*  
     ADR 0003 让导出成本随页数线性增长。规划:PDF 打开后立即同步检测当前页,Web Worker 后台逐页检测其余页。导出等待所有页就绪(进度 UI)。MuPDF WASM 在持久 worker 中复用。
 
 ## 已知限制 / Known Limitations
 
 - **WebP 导出**:图片可上传 WebP 但 `pdf-lib` 仅支持 PNG/JPG,导出时 WebP 会被跳过并打印警告。
-- **AcroForm 创建**:本项目支持读取 AcroForm 字段、写入字段值,但不支持从空白 PDF 创建新 AcroForm 表单字段(需要 MuPDF 写入完整 AcroForm 字典)。
+- **MuPDF 加载体积**:MuPDF WASM 包 ~10MB(构建产物 `dist/assets/mupdf-wasm-*.wasm` 实测 9.99MB),首次在「选择」工具下自动检测文本块(即双击编辑的前置步骤)时加载,有进度条 + 失败降级。
+- **签名底色透明**:签名画布用 `clearRect` 保持 alpha=0,保存为 RGBA PNG(色彩类型 6),`pdf-lib embedPng` 通过 SMask 保留透明通道 —— 实测签名覆盖在黑色条带上时,条带从笔画间隙正常透出。验证脚本:`scripts/verify-signature-alpha.mjs`(含"旧的白底行为"对照组,证明检查能区分二者)。
+- **涂黑导出体积**:`image_method = PIXELS` 会重新编码被覆盖的图片,扫描件导出体积显著增大 —— 实测 fixture S5(170.6 KB)导出为 4.3 MB(约 25 倍)。这是"局部真脱敏"的代价:`REMOVE` 模式体积不变(171.2 KB)但会把整张图片删掉,`NONE` 则完全不脱敏。可行优化:当涂黑框完整覆盖某张图片时对该图改用 `REMOVE`。详见 `scripts/verify-redacted-export.mjs`。
+- **涂黑不覆盖批注层**:redaction 作用于页面内容流。若 PDF 自身带有文本批注(annotation),其内容不在内容流中,不受涂黑影响。
 - **多行段落文本块**:段落内的多行若字号/粗细/斜体不一致,会被拆分为多个独立块;单独编辑某行时其他行保持原状。
-- **MuPDF 加载体积**:MuPDF WASM 包 ~30MB,首次启用"编辑文字"或"表单"工具时需 1-3s 加载(有进度条 + 失败降级)。
 - **无批量编辑 API**:目前没有 JS API 供外部脚本调用,只能通过 UI 交互。
 - **依赖 happy-dom / pdfjs legacy build 测试**:浏览器专用 API (Worker、Canvas 渲染) 在测试中被降级,某些路径无法覆盖。
 - **画笔精度**:贝塞尔曲线被线性化,放大后可见到多边形锯齿。
 - **字体规范化 ([ADR 0001](docs/adr/0001-web-safe-font-mapping.md))**:编辑过的文本块导出时被规范化到 5 类映射字体(Arial / Times / Courier / 思源黑体 / 思源宋体)。Bold 用真字重文件,italic 用 CTM 斜切模拟(Source Han 无 italic 变体)。未编辑的块保留原 PDF 字节(原嵌入字体 + 完整样式)。
-- **CJK 字体文件体积**:`public/fonts/` 下 4 个 OTF 文件共 ~40MB(思源黑 Regular/Bold + 思源宋 Regular/Bold),随项目分发。
+- **CJK 字体文件体积**:`public/fonts/` 下 4 个 OTF 文件共 ~41MB(思源黑 Regular/Bold + 思源宋 Regular/Bold),随项目分发;`vite build` 会把 `public/` 全量拷入产物,故 `dist/` 中字体占约 41MB。导出时按需 `fetch` 并按 `(fontClass, weight)` 子集嵌入,导出产物本身只增加数十 KB。
 - **分页检测流水线待落地**:ADR 0004 的 Web Worker 多线程检测尚未实现,大文档导出仍可能在主线程阻塞数秒。
 
 ## 路线图 / Roadmap
@@ -336,7 +432,6 @@ npm run test:ui
 
 ### 中期 / Mid-term
 
-- [ ] AcroForm 创建向导(从空白 PDF 添加文本字段)
 - [ ] MuPDF WASM 体积优化 / CDN 分发
 - [ ] 图片 OCR / 表格识别(Tesseract.js 或外部 API)
 - [ ] 协同编辑(WebSocket + CRDT,基于 Immer patches 已可序列化的基础)
@@ -347,7 +442,6 @@ npm run test:ui
 - [ ] 移动端适配(触摸优化、手势缩放)
 - [ ] PWA 离线支持(`vite-plugin-pwa` + Service Worker 缓存 WASM)
 - [ ] PDF 加密 / 密码保护
-- [ ] 表单字段树形结构(目前仅扁平字段)
 
 ## 测试 / Testing
 
@@ -371,11 +465,22 @@ npm run test:ui       # 可视化界面
 - `mupdfEngine.spec.ts` - MuPDF 引擎检测
 - `pdfiumEngine.spec.ts` - PDFium 引擎检测
 - `readUtf16LE.spec.ts` - UTF-16 LE 解码
+- `zoom.spec.ts` - 缩放档位步进(含"从默认 100% 放大"的回归用例)
+- `flatten-font.spec.ts` - 导出时按 `(fontClass, weight)` 选字体变体
+- `subset-embed.spec.ts` - CJK 导出走子集嵌入,体积保持 KB 级
+- `redact-modes.spec.ts` - 涂黑参数映射(`text-only` vs `full` 的四元参数逐项断言、按 (页, 模式) 分组、失败返回原始字节)
+- `shortcuts.spec.ts` - 快捷键绑定(`I`/`S` 打开外部 UI、`R` 切涂黑、`Ctrl+S` 保存、输入框内不拦截)
 
 **集成测试 / Integration** (`tests/integration/`):
 - `store-flow.spec.ts` - store 集成(create -> addOverlay -> undo -> redo)
 - `pdfbytes.spec.ts` - PDF bytes 往返
-- `resume.spec.ts` - 简历模板端到端流程
+- `redact-export.spec.ts` - 涂黑导出:无文本编辑时也会执行 redaction、模式标注正确、**redaction 失败必须抛错而非导出假脱敏**、仅有文本编辑时保留白底兜底降级
+- `resume.spec.ts` - PDFium 引擎在真实简历 PDF 上的端到端流程。**默认跳过**:PDFium 在 Node/Vitest 下间接函数表初始化不稳定,且 fixture 路径依赖本机文件。跳过时会打印原因;设 `MINIPDF_RESUME_PDF=<path>` 可本地运行。
+
+**实验脚本 / Experiments** (`scripts/`,不进 CI,用于做决策):
+- `experiment-subset.mjs` - 决定 CJK 是否可安全子集嵌入
+- `experiment-redact.mjs` - 决定 `applyRedactions` 四个参数的语义(含对照组,证明 `(false,0,0,0)` 会产出假脱敏)
+- `verify-redacted-export.mjs` - 校验一次真实导出:被覆盖区域内容确实消失、区域外未被误删。含"不画黑框"的隔离检查,以排除"黑框盖住未删除内容"的假象
 
 ## 致谢 / Acknowledgments
 

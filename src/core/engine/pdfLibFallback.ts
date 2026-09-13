@@ -4,17 +4,14 @@
 // `package.json`:
 //
 //   * `pdfjs-dist` provides `getTextContent` (yields per-glyph TextItems
-//     with a transform matrix in PDF user-space units) and
-//     `getFieldObjects` (AcroForm enumeration).
+//     with a transform matrix in PDF user-space units).
 //
-// 重构后只保留 detect/parse 只读能力。文本编辑和表单写入不再走引擎 --
+// 重构后只保留 detect 只读能力。文本编辑不再走引擎 --
 // 编辑只改 overlay,导出时用 pdf-lib 统一应用。
 import { loadDocument, pdfjsLib } from '../pdf/loader';
 import type {
   DetectTextBlocksOptions,
   EngineInterface,
-  FormField,
-  ParseFormFieldsOptions,
   TextBlock,
 } from './types';
 import type { FontClass, Rect } from '../types';
@@ -225,103 +222,9 @@ async function detectTextBlocksImpl(
   return blocks;
 }
 
-function mapFieldKind(
-  type: string | undefined,
-  hasOptions: boolean
-): FormField['kind'] {
-  const t = (type ?? '').toLowerCase();
-  if (t === 'tx' || t === 'text') return 'text';
-  if (t === 'ch') return hasOptions ? 'select' : 'text';
-  if (t === 'sig') return 'signature';
-  if (t === 'btn') return 'checkbox';
-  if (t === 'radio') return 'radio';
-  return 'text';
-}
-
-function normaliseValue(
-  value: string | string[] | boolean | undefined,
-  kind: FormField['kind']
-): string | boolean {
-  if (kind === 'checkbox' || typeof value === 'boolean') {
-    return !!value;
-  }
-  if (Array.isArray(value)) return value.join(', ');
-  return value ?? '';
-}
-
-async function parseFormFieldsImpl(
-  opts: ParseFormFieldsOptions
-): Promise<FormField[]> {
-  const doc = await loadDocument(opts.pdfBytes);
-  // AcroForm fields are document-level in pdfjs's view. We get them
-  // once, then walk the pages to attribute each field to the page its
-  // annotation rectangle lives on.
-  const raw = await doc.getFieldObjects();
-  const fields: FormField[] = [];
-  if (!raw) return fields;
-  // Cache per-page viewport for bbox -> pageIndex lookup.
-  const viewportByPage: Array<{ width: number; height: number }> = [];
-  for (let i = 1; i <= doc.numPages; i += 1) {
-    const page = await doc.getPage(i);
-    const vp = page.getViewport({ scale: 1 });
-    viewportByPage.push({ width: vp.width, height: vp.height });
-    page.cleanup();
-  }
-  for (const [name, arr] of Object.entries(raw)) {
-    if (!Array.isArray(arr)) continue;
-    arr.forEach((entry: unknown, idx: number) => {
-      if (!entry || typeof entry !== 'object') return;
-      const e = entry as {
-        type?: string;
-        value?: string | string[] | boolean;
-        rect?: [number, number, number, number];
-        options?: Array<[string, string]>;
-        page?: number;
-      };
-      const rect = e.rect;
-      if (!rect) return;
-      // If pdfjs already gave us the page index, use it. Otherwise guess
-      // by finding the page whose viewport rect contains the field's
-      // bottom-left corner.
-      let pageIndex = typeof e.page === 'number' ? e.page : 0;
-      if (typeof e.page !== 'number') {
-        for (let i = 0; i < viewportByPage.length; i += 1) {
-          const vp = viewportByPage[i];
-          if (rect[0] >= 0 && rect[0] <= vp.width) {
-            pageIndex = i;
-            break;
-          }
-        }
-      }
-      const vp = viewportByPage[pageIndex];
-      const [x1, y1, x2, y2] = rect;
-      const top = vp.height - y2;
-      const bbox: Rect = {
-        x: Math.min(x1, x2),
-        y: top,
-        w: Math.abs(x2 - x1),
-        h: Math.abs(y2 - y1),
-      };
-      const kind = mapFieldKind(e.type, !!e.options);
-      const value = normaliseValue(e.value, kind);
-      fields.push({
-        id: `ff-${pageIndex}-${name}-${idx}`,
-        pageIndex,
-        fieldName: name,
-        kind,
-        bbox,
-        value,
-        options: e.options?.map((o) => o[0] ?? o[1] ?? ''),
-      });
-    });
-  }
-  return fields;
-}
-
 export const pdfLibFallbackEngine: EngineInterface = {
   kind: 'pdflib-overlay',
   detectTextBlocks: detectTextBlocksImpl,
-  parseFormFields: parseFormFieldsImpl,
 };
 
 void pdfjsLib;

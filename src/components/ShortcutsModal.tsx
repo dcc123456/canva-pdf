@@ -24,10 +24,8 @@ const GROUPS: Group[] = [
     title: '工具切换 / Tool',
     entries: [
       { keys: ['V'], label: '选择 / Select' },
-      { keys: ['E'], label: '编辑文字 / Edit text' },
-      { keys: ['F'], label: '表单 / Form' },
       { keys: ['H'], label: '高亮 / Highlight' },
-      { keys: ['N'], label: '便签 / Note' },
+      { keys: ['R'], label: '涂黑·密文 / Redact' },
       { keys: ['T'], label: '文字 / Text' },
       { keys: ['I'], label: '图片 / Image' },
       { keys: ['D'], label: '画笔 / Draw' },
@@ -58,10 +56,17 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    title: '表单 / Form',
+    title: '文件 / File',
     entries: [
-      { keys: ['Click'], label: '聚焦 / Focus field' },
-      { keys: ['Tab'], label: '下一字段 / Next field' },
+      { keys: ['Ctrl', 'S'], label: '保存项目 / Save project' },
+    ],
+  },
+  {
+    title: '文本 / Text',
+    entries: [
+      { keys: ['双击'], label: '进入编辑文字 / Edit block (under 选择)' },
+      { keys: ['Ctrl', 'Enter'], label: '提交编辑 / Commit edit' },
+      { keys: ['Esc'], label: '取消编辑 / Cancel edit' },
     ],
   },
   {

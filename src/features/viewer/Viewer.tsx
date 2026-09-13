@@ -1,7 +1,7 @@
 // Viewer: Canva-style continuous vertical multi-page canvas.
 // - 全部页垂直排列,IntersectionObserver 懒渲染(进入视口才画,离开取消)
 // - 滚动自动同步"当前页";页码/键盘跳页平滑滚动到目标页
-// - 每页挂完整编辑层(OverlayLayer/FormFieldOverlay/TextBlockEditLayer/
+// - 每页挂完整编辑层(OverlayLayer/TextBlockEditLayer/
 //   CanvasInteractionLayer),点击哪页编辑哪页
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
@@ -12,7 +12,6 @@ import { useDocumentStore } from '../../store/documentStore';
 import type { PageMeta } from '../../core/types';
 import { OverlayLayer } from '../overlays/OverlayLayer';
 import { CanvasInteractionLayer } from './CanvasInteractionLayer';
-import { FormFieldOverlay } from '../forms/FormFieldOverlay';
 import { TextBlockEditLayer } from '../text-edit/TextBlockEditLayer';
 
 export interface ViewerProps {
@@ -616,7 +615,6 @@ function PageView({
           }}
         >
           <OverlayLayer page={page} />
-          <FormFieldOverlay page={page} />
           <TextBlockEditLayer page={page} />
           <CanvasInteractionLayer page={page} registerFileInput={() => {}} />
         </div>

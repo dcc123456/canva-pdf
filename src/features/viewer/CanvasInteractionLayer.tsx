@@ -1,5 +1,5 @@
 // CanvasInteractionLayer: an invisible div that covers the rendered page and
-// handles pointer interactions for all "creation" tools (highlight, note,
+// handles pointer interactions for all "creation" tools (highlight, redact,
 // text, image, draw, signature). It translates screen pixels into PDF
 // coordinates and dispatches to the document store.
 //
@@ -96,22 +96,6 @@ export function CanvasInteractionLayer({
     const p = eventToPdf(e);
     dragStartRef.current = p;
 
-    if (tool === 'note') {
-      const id = uuidv4();
-      addOverlay({
-        id,
-        type: 'note',
-        pageId: page.id,
-        position: { x: p.x - 50, y: p.y - 40 },
-        size: { w: 100, h: 80 },
-        text: '',
-        color: '#FDE68A',
-      });
-      setSelectedOverlayId(id);
-      setTool('select');
-      return;
-    }
-
     if (tool === 'draw') {
       drawPointsRef.current = [p];
       drawPathRef.current = `M ${p.x} ${p.y}`;
@@ -119,7 +103,7 @@ export function CanvasInteractionLayer({
       return;
     }
 
-    // highlight / text: start a drag rectangle preview
+    // highlight / redact / text: start a drag rectangle preview
     setDragRect({ x: p.x, y: p.y, w: 0, h: 0 });
   }
 
@@ -203,6 +187,18 @@ export function CanvasInteractionLayer({
         opacity: 0.4,
       });
       setSelectedOverlayId(id);
+    } else if (tool === 'redact') {
+      // 涂黑 / 密文:默认纯黑。真正的删除发生在导出时(见 core/writer/
+      // redact.ts 的 'full' 模式),此处只落一个 overlay。
+      const id = uuidv4();
+      addOverlay({
+        id,
+        type: 'redact',
+        pageId: page.id,
+        rect: { x, y, w, h },
+        color: '#000000',
+      });
+      setSelectedOverlayId(id);
     } else if (tool === 'text') {
       const id = uuidv4();
       addOverlay({
@@ -227,13 +223,13 @@ export function CanvasInteractionLayer({
   }
 
   // This layer only needs to intercept drags for the *creation* tools.
-  // For `select`, `edit-text`, `form`, `image`, and `signature` it must
-  // stay fully pointer-transparent so clicks reach the underlying
-  // OverlayLayer / TextBlockEditLayer / FormFieldOverlay / file input.
+  // For `select`, `image`, and `signature` it must stay fully
+  // pointer-transparent so clicks reach the underlying
+  // OverlayLayer / TextBlockEditLayer / file input.
   const interactive =
     tool === 'highlight' ||
+    tool === 'redact' ||
     tool === 'text' ||
-    tool === 'note' ||
     tool === 'draw';
 
   return (
